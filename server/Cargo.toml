@@ -1,0 +1,16 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["dynamic_linking"] }
+tokio = { workspace = true }
+uuid = { workspace = true }
+postcard = { workspace = true}
+serde = { workspace = true }
+shared = { path = "../shared" }
+
+[lib]
+name = "server"
+path = "src/lib.rs"

@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["client", "examples/dedicated_server/client_dedicated_test", "examples/dedicated_server/server_dedicated_test", "message_pro_macro","server", "shared"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+strip = "debuginfo"
+
+[workspace.dependencies]
+bevy = { version = "0.18.0", features = ["dynamic_linking"] }
+log = { version = "0.4.29", features = ["max_level_debug", "release_max_level_warn"] }
+erased-serde = { version = "0.4.10" }
+postcard = { version = "1.1.3", features = ["use-std"]  }
+serde = { version = "1.0.228" }
+tokio = { version = "1.50.0", features = ["full"] }
+uuid = { version = "1.22.0" }

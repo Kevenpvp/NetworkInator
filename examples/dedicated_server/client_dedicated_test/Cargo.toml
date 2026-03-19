@@ -1,0 +1,9 @@
+[package]
+name = "client_dedicated_test"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+client = {path = "../../../client"}
+shared = {path = "../../../shared"}
+bevy = { workspace = true, features = ["dynamic_linking"]  }
