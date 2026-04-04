@@ -1,62 +1,49 @@
-use std::io::Error;
+use std::any::Any;
+use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use bevy::log::warn;
-use bevy::prelude::{Res, Time};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use shared::plugins::messaging::{MessageInfos, MessageTrait};
-use shared::plugins::network::{ClientConnectionSharedValues, ClientPort, ClientSettingsPort, PortInfosTrait, PortSendType, SendMessageArgs};
-use shared::port_systems::read_writer_tcp::{read_from_settings, read_value_to_usize, value_from_number, write_from_settings, BytesOptions, OrderOptions};
+use shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
+use shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
-pub struct TcpInfosClient;
-
-pub struct TcpConfigsClient{
+pub struct TcpClientSettings{
     address: IpAddr,
     port: u16,
-    hook_stream: Option<fn(tcp_stream: TcpStream) -> TcpStream>,
     bytes: BytesOptions,
-    order: OrderOptions
+    order: OrderOptions,
+    hook_stream: Option<fn(tcp_stream: TcpStream) -> TcpStream>,
 }
 
-pub struct TcpPortClient{
-    settings: TcpConfigsClient,
-    owned_read_half: Option<Arc<Mutex<OwnedReadHalf>>>,
-    owned_write_half: Option<Arc<Mutex<OwnedWriteHalf>>>,
+pub struct TcpClientPort{
+    settings: TcpClientSettings,
 
-    connected: bool,
-    connecting: bool,
-    reconnecting: bool,
+    started: bool,
+    starting: bool,
+    first_started: bool,
     main_port: bool,
-    listening: bool,
     authenticated: bool,
 
-    connecting_time: f32,
+    internal_buffer: Vec<u8>,
 
-    failed_to_connect_receiver: UnboundedReceiver<Error>,
-    failed_to_connect_sender: Arc<UnboundedSender<Error>>,
+    owned_read_half: Option<OwnedReadHalf>,
+    owned_write_half: Option<Arc<Mutex<OwnedWriteHalf>>>,
 
-    connecting_downed_receiver: UnboundedReceiver<Error>,
-    connecting_downed_sender: Arc<UnboundedSender<Error>>,
+    tpc_stream_receiver: UnboundedReceiver<TcpStream>,
+    tcp_stream_sender: Arc<UnboundedSender<TcpStream>>,
 
-    connected_receiver: UnboundedReceiver<TcpStream>,
-    connected_sender: Arc<UnboundedSender<TcpStream>>,
-
-    message_from_server_receiver: UnboundedReceiver<Vec<u8>>,
-    message_from_server_sender: Arc<UnboundedSender<Vec<u8>>>,
+    connecting_downed_receiver: UnboundedReceiver<(Error,bool)>,
+    connecting_downed_sender: Arc<UnboundedSender<(Error,bool)>>,
 }
 
-
-impl PortInfosTrait for TcpInfosClient{
-
-}
-
-impl Default for TcpConfigsClient {
-    fn default() -> Self {
-        TcpConfigsClient {
+impl Default for TcpClientSettings{
+    fn default()->Self{
+        TcpClientSettings{
             address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             port: 8080,
             bytes: BytesOptions::U32,
@@ -66,99 +53,80 @@ impl Default for TcpConfigsClient {
     }
 }
 
-impl TcpConfigsClient{
-    pub fn with_port(mut self, port: u16) -> Self {
-        self.port = port;
+impl ClientSettingsPort for TcpClientSettings{
+    fn create_port(self: Box<Self>) -> Box<dyn ClientPortTrait> {
+        let (tcp_stream_sender,tpc_stream_receiver) = unbounded_channel::<TcpStream>();
+        let (connecting_downed_sender,connecting_downed_receiver) = unbounded_channel::<(Error,bool)>();
 
-        self
-    }
-}
-
-impl ClientSettingsPort for TcpConfigsClient {
-    fn create_port(self: Box<Self>) -> Box<dyn ClientPort> {
-        let (failed_to_connect_sender,failed_to_connect_receiver) = unbounded_channel::<Error>();
-        let (connecting_downed_sender,connecting_downed_receiver) = unbounded_channel::<Error>();
-        let (connected_sender,connected_receiver) = unbounded_channel::<TcpStream>();
-        let (message_from_server_sender,message_from_server_receiver) = unbounded_channel::<Vec<u8>>();
-
-        Box::new(TcpPortClient{
+        Box::new(TcpClientPort{
             settings: *self,
+
+            started: false,
+            starting: false,
+            first_started: false,
+            main_port: false,
+            authenticated: false,
+
+            internal_buffer: Vec::new(),
+
             owned_read_half: None,
             owned_write_half: None,
 
-            connected: false,
-            connecting: false,
-            reconnecting: false,
-            main_port: false,
-            listening: false,
-            authenticated: false,
-
-            connecting_time: 0.0,
-
-            failed_to_connect_receiver,
-            failed_to_connect_sender: Arc::new(failed_to_connect_sender),
+            tpc_stream_receiver,
+            tcp_stream_sender: Arc::new(tcp_stream_sender),
 
             connecting_downed_receiver,
             connecting_downed_sender: Arc::new(connecting_downed_sender),
-
-            connected_receiver,
-            connected_sender: Arc::new(connected_sender),
-
-            message_from_server_receiver,
-            message_from_server_sender: Arc::new(message_from_server_sender)
         })
     }
 }
 
-impl ClientPort for TcpPortClient {
-    fn start(&mut self, client_connection_shared_values: &ClientConnectionSharedValues, time: &Res<Time>) {
-        if self.connected || self.connecting { return; }
+impl ClientPortTrait for TcpClientPort{
+    fn start(&mut self, network_port_shared_infos: &dyn Any) {
+        if self.started || self.starting { return; }
 
-        self.connecting = true;
+        self.starting = true;
 
-        if let Some(runtime) = client_connection_shared_values.get_runtime(){
-            self.connecting_time = time.elapsed_secs();
+        if let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosClient>(){
+            if let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
+                let settings = &self.settings;
+                let address = (settings.address, settings.port);
+                let first_started = self.first_started;
+                let hook_stream = settings.hook_stream;
 
-            let connected_sender = Arc::clone(&self.connected_sender);
-            let failed_to_connect_sender = Arc::clone(&self.failed_to_connect_sender);
-            let settings = &self.settings;
-            let address = (settings.address, settings.port);
+                let connecting_downed_sender = Arc::clone(&self.connecting_downed_sender);
+                let tcp_stream_sender = Arc::clone(&self.tcp_stream_sender);
 
-            runtime.spawn(async move {
-                let tcp_stream_future = TcpStream::connect(address);
+                runtime.spawn(async move {
+                    let tcp_stream_future = TcpStream::connect(address);
 
-                match tcp_stream_future.await {
-                    Ok(tcp_stream) => {
-                        if let Err(err) = connected_sender.send(tcp_stream) {
-                            eprintln!("Not possible to send connected tcp_stream: {}", err);
-                            return;
+                    match tcp_stream_future.await {
+                        Ok(mut tcp_stream) => {
+                            tcp_stream = match hook_stream {
+                                Some(hook_stream) => {
+                                    hook_stream(tcp_stream)
+                                }
+                                None => {
+                                    tcp_stream
+                                }
+                            };
+
+                            if let Err(send_error) = tcp_stream_sender.send(tcp_stream) {
+                                warn!("Failed to send TCP client connected, error: {}", send_error);
+                            }
                         }
+                        Err(e) => {
+                            if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
+                                warn!("Failed to send TCP port failed to connect, error: {}", send_error);
+                            }
+                        },
                     }
-                    Err(e) => {
-                        if let Err(err) = failed_to_connect_sender.send(Error::from(e)) {
-                            eprintln!("Not possible to send failed to connect tcp_stream: {}", err);
-                            return;
-                        }
-                    }
-                }
-            });
+                });
+            }
         }
     }
 
-    fn as_main_port(&mut self) -> bool {
-        self.main_port = true;
-        self.main_port
-    }
-
-    fn reconnect(&mut self, client_connection_shared_values: &ClientConnectionSharedValues, time: &Res<Time>) {
-        if self.reconnecting || self.connecting { return; }
-
-        self.connecting = false;
-        self.connected = false;
-        self.listening = false;
-        self.authenticated = false;
-        self.reconnecting = true;
-
+    fn close(&mut self) {
         if let Some(owned_read_half) = self.owned_read_half.take() {
             drop(owned_read_half);
         }
@@ -166,244 +134,137 @@ impl ClientPort for TcpPortClient {
         if let Some(owned_write_half) = self.owned_write_half.take() {
             drop(owned_write_half);
         }
-
-        self.start(client_connection_shared_values, time);
     }
 
-    fn check_connection_down(&mut self) -> (bool, Option<Error>) {
-        match self.connecting_downed_receiver.try_recv() {
-            Ok(error) => {
-                self.connecting = false;
-                self.reconnecting = false;
-                self.connected = false;
-                self.listening = false;
-                self.authenticated = false;
+    fn started(&mut self) -> (bool, bool) {
+        if self.started {
+            (true,false)
+        }else {
+            match self.tpc_stream_receiver.try_recv() {
+                Ok(tcp_stream) => {
+                    self.started = true;
+                    self.starting = false;
+                    self.first_started = true;
 
-                if let Some(owned_read_half) = self.owned_read_half.take() {
-                    drop(owned_read_half);
+                    let (owned_read_half,write) = tcp_stream.into_split();
+
+                    self.owned_read_half = Some(owned_read_half);
+                    self.owned_write_half = Some(Arc::new(Mutex::new(write)));
+
+                    (true,true)
                 }
-
-                if let Some(owned_write_half) = self.owned_write_half.take() {
-                    drop(owned_write_half);
-                }
-
-                (true, Some(error))
-            }
-            Err(_) => {
-                match self.failed_to_connect_receiver.try_recv() {
-                    Ok(error) => {
-                        self.connecting = false;
-                        self.reconnecting = false;
-                        self.connected = false;
-                        self.listening = false;
-                        self.authenticated = false;
-
-                        if let Some(owned_read_half) = self.owned_read_half.take() {
-                            drop(owned_read_half);
-                        }
-
-                        if let Some(owned_write_half) = self.owned_write_half.take() {
-                            drop(owned_write_half);
-                        }
-
-                        (true, Some(error))
-                    }
-                    Err(_) => {
-                        (false, None)
-                    }
+                Err(_) => {
+                    (false,false)
                 }
             }
         }
     }
 
-    fn connected(&mut self) -> bool {
-        match self.connected_receiver.try_recv() {
-            Ok(mut tcp_stream) => {
-                let hook_stream = &self.settings.hook_stream;
+    fn disconnected(&mut self) -> (bool, Option<Error>, bool) {
+        match self.connecting_downed_receiver.try_recv() {
+            Ok((error, first_started)) => {
+                self.started = false;
+                self.starting = false;
 
-                tcp_stream = match hook_stream {
-                    Some(hook_stream) => {
-                        hook_stream(tcp_stream)
-                    }
-                    None => {
-                        tcp_stream
-                    }
-                };
+                self.close();
 
-                let (owned_read_half, owned_write_half) = tcp_stream.into_split();
-
-                self.owned_read_half = Some(Arc::new(Mutex::new(owned_read_half)));
-                self.owned_write_half = Some(Arc::new(Mutex::new(owned_write_half)));
-
-                self.connected = true;
-
-                true
+                (true,Some(error),first_started)
             },
             Err(_) => {
-                false
-            }
-        }
-    }
-
-    fn disconnect(&mut self) {
-        if let Some(owned_read_half) = self.owned_read_half.take() {
-            drop(owned_read_half)
-        }
-
-        if let Some(owned_write_half) = self.owned_write_half.take() {
-            drop(owned_write_half)
-        }
-    }
-
-    fn start_listening(&mut self, client_connection_shared_values: &ClientConnectionSharedValues) {
-        if self.listening || !self.connected {
-            return;
-        }
-
-        self.listening = true;
-
-        if let Some(runtime) = client_connection_shared_values.get_runtime(){
-            if let Some(owned_read_half) = &self.owned_read_half{
-                let connecting_downed_sender = Arc::clone(&self.connecting_downed_sender);
-                let owned_read_half = Arc::clone(owned_read_half);
-                let settings = &self.settings;
-                let bytes_options = settings.bytes;
-                let order_options = settings.order;
-                let message_from_server_sender = Arc::clone(&self.message_from_server_sender);
-
-                runtime.spawn(async move {
-                    loop {
-                        let mut guard  = owned_read_half.lock().await;
-
-                        match read_from_settings(&mut guard, &bytes_options, &order_options).await {
-                            Ok(read_value) => {
-                                let size = read_value_to_usize(read_value);
-                                let mut buf = vec![0u8; size];
-
-                                if let Err(e) = guard.read_exact(&mut buf).await {
-                                    warn!("Error ao ler corpo da message: {}", e);
-
-                                    if let Err(err) = connecting_downed_sender.send(e) {
-                                        eprintln!("Not possible to send failed to connection down error: {}", err);
-                                        return;
-                                    }
-                                    
-                                    break;
-                                }
-
-                                if let Err(err) = message_from_server_sender.send(buf) {
-                                    eprintln!("Not possible to send message from server: {}", err);
-                                    return;
-                                }
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                continue
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof ||
-                                e.kind() == std::io::ErrorKind::ConnectionReset => {
-                                if let Err(err) = connecting_downed_sender.send(e) {
-                                    eprintln!("Not possible to send failed to connection down error: {}", err);
-                                    return;
-                                }
-                                break
-                            }
-                            Err(e) => {
-                                if let Err(err) = connecting_downed_sender.send(e) {
-                                    eprintln!("Not possible to send failed to connection down error: {}", err);
-                                    return;
-                                }
-                                break
-                            }
-                        }
-                    }
-                });
-            }
-        }
-    }
-
-    fn get_connecting_status(&self) -> (bool, bool, f32) {
-        (self.connecting,self.reconnecting,self.connecting_time)
-    }
-
-    fn get_port_infos(&self) -> &dyn PortInfosTrait {
-        &TcpInfosClient
-    }
-
-    fn send_message_for_server(&mut self, client_connection_shared_values: &ClientConnectionSharedValues, message: &dyn MessageTrait, message_id: u32, _: Option<Box<dyn SendMessageArgs>>) {
-        if let Some(runtime) = client_connection_shared_values.get_runtime(){
-            if let Some(owned_write_half) = &self.owned_write_half {
-                let owned_write_half = Arc::clone(owned_write_half);
-                let settings = &self.settings;
-                let bytes_options = settings.bytes;
-                let order_options = settings.order;
-                let buffer = match postcard::to_stdvec(message) {
-                    Ok(buff) => {buff}
-                    Err(_) => {
-                        warn!("Error to serialize message");
-                        return;
-                    }
-                };
-
-                let message_infos = MessageInfos{
-                    message_id,
-                    message: buffer,
-                };
-                let buffer = match postcard::to_stdvec(&message_infos) {
-                    Ok(buff) => {buff}
-                    Err(_) => {
-                        warn!("Error to serialize message");
-                        return;
-                    }
-                };
-                let message_size = buffer.len();
-
-                runtime.spawn(async move {
-                    let mut guard = owned_write_half.lock().await;
-
-                    let size_value = value_from_number(message_size as f64, bytes_options);
-
-                    if let Err(_) = write_from_settings(&mut guard, &size_value, &order_options).await {
-                        return;
-                    }
-
-                    if let Err(_) = guard.write_all(&buffer).await {
-                        return;
-                    }
-                });
+                (false,None,self.first_started)
             }
         }
     }
 
     fn get_server_messages(&mut self) -> Vec<Vec<u8>> {
-        let mut messages: Vec<Vec<u8>>  = Vec::new();
+        let settings = &self.settings;
 
-        loop {
-            match self.message_from_server_receiver.try_recv() {
-                Ok(message) => {
-                    messages.push(message);
-                }
-                Err(_) => {
-                    break
+        extract_messages_from_buffer(&mut self.internal_buffer, &settings.bytes, &settings.order)
+    }
+
+    fn get_port_reliability(&mut self) -> &PortReliability {
+        &PortReliability::Reliable
+    }
+
+    fn as_main_port(&mut self) -> bool {
+        self.main_port = true;
+
+        true
+    }
+
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<Box<dyn Any>>) {
+        if let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosClient>() {
+            if let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
+                if let Some(owned_write_half) = &self.owned_write_half {
+                    let message_infos = &MessageInfos{
+                        message_id,
+                        message: postcard::to_stdvec(message).unwrap(),
+                    };
+
+                    let buffer = match postcard::to_stdvec(message_infos) {
+                        Ok(buff) => {buff}
+                        Err(_) => {
+                            warn!("Error to serialize message");
+                            return;
+                        }
+                    };
+
+                    let message_size = buffer.len();
+                    let owned_write_half = Arc::clone(owned_write_half);
+                    let settings = &self.settings;
+                    let order_options = settings.order;
+                    let bytes_options = settings.bytes;
+
+                    runtime.spawn(async move {
+                        let mut guard = owned_write_half.lock().await;
+
+                        let size_value = value_from_number(message_size as f64, bytes_options);
+
+                        if let Err(send_error) = write_from_settings(&mut guard, &size_value, &order_options).await {
+                            warn!("Failed to send TCP message client, error: {}", send_error);
+                            return;
+                        }
+
+                        if let Err(send_error) = guard.write_all(&buffer).await {
+                            warn!("Failed to send TCP all message client, error: {}", send_error);
+                            return;
+                        }
+                    });
                 }
             }
         }
-
-        messages
-    }
-
-    fn is_port_authenticated(&self) -> bool {
-        self.authenticated
-    }
-
-    fn set_port_authenticated(&mut self) {
-        self.authenticated = true;
     }
 
     fn is_main_port(&self) -> bool {
         self.main_port
     }
 
-    fn get_port_send_type(&self) -> &PortSendType {
-        &PortSendType::Reliable
+    fn listen_to_server(&mut self, _network_port_shared_infos: &dyn Any) {
+        if let Some(owned_read_half) = &self.owned_read_half {
+            let mut temp_buf = [0u8; 1024];
+
+            match owned_read_half.try_read(&mut temp_buf) {
+                Ok(n) => {
+                    self.internal_buffer.extend_from_slice(&temp_buf[..n]);
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    return;
+                }
+                Err(e) => {
+                    if let Err(send_error) = self.connecting_downed_sender.send((e,self.first_started)) {
+                        warn!("Failed to send TCP peer port connection_aborted, error: {}", send_error);
+                        return;
+                    }
+                },
+            }
+        }
+    }
+
+    fn authenticate_port(&mut self) {
+        self.authenticated = true;
+    }
+    
+    fn is_port_authenticated(&self) -> bool {
+        self.authenticated
     }
 }

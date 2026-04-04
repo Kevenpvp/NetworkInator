@@ -44,12 +44,20 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
         quote! {
             impl MessageTrait for #name {
                 fn as_authentication(&self) -> bool { true }
+
+                fn deserialize(data: &[u8]) -> Self {
+                    postcard::from_bytes(data).unwrap()
+                }
             }
         }
     } else {
         quote! {
             impl MessageTrait for #name {
                 fn as_authentication(&self) -> bool { false }
+
+                fn deserialize(data: &[u8]) -> Self {
+                    postcard::from_bytes(data).unwrap()
+                }
             }
         }
     };

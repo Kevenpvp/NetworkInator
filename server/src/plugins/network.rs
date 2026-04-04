@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::io::Error;
-use std::sync::Arc;
 use bevy::app::App;
 use bevy::log::{error};
-use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageWriter, Plugin, Time};
+use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageWriter, Plugin};
 use uuid::Uuid;
-use shared::{NetRes, NetResMut};
-use shared::plugins::authentication::{Authenticated, LocalPeerId, LocalSeasonUUID};
+use shared::{NetResMut};
 use shared::plugins::messaging::MessagingPlugin;
 use shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
 
@@ -22,7 +20,8 @@ pub struct ServerPortConnected{
 pub struct ServerPortDisconnected{
     pub port_id: u32,
     pub connection_id: u32,
-    pub error: Option<Error>
+    pub error: Option<Error>,
+    pub was_connected: bool
 }
 
 #[derive(Message)]
@@ -63,156 +62,116 @@ impl Plugin for ServerNetworkPlugin {
                 NetworkType::DedicatedServer
             ])));
         }
-        
+
         app.add_message::<ServerPortConnected>();
         app.add_message::<ServerPortDisconnected>();
         app.add_message::<AnonymousPeersAcceptedOnPort>();
         app.add_message::<PeersDroppedServer>();
 
-        app.add_systems(First,(set_local_player_as_connected,start_ports,check_connected_ports,check_ports_down,start_accepting_ports_connections,check_peers_disconnected,check_ports_peers_accepted,check_peers_queue_accepted,start_listening_peers).chain());
-    }
-}
-
-pub fn set_local_player_as_connected(
-    mut current_network_sides: NetResMut<CurrentNetworkSides>,
-    local_season_uuid: Option<NetResMut<LocalSeasonUUID>>,
-    local_peer_id: Option<NetResMut<LocalPeerId>>,
-    authenticated: Option<MessageWriter<Authenticated>>,
-    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-){
-    if !current_network_sides.side().contains(&NetworkType::LocalServer){
-        return;
-    }
-
-    if let Some(mut local_season_uuid) = local_season_uuid {
-        if local_season_uuid.0.is_none() {
-            local_season_uuid.0 = Some(Uuid::new_v4());
-        }
-
-        if let Some(mut local_peer_id) = local_peer_id{
-            if local_peer_id.0.is_none() {
-                local_peer_id.0 = Some(Uuid::new_v4());
-                
-                if let Some(mut authenticated) = authenticated{
-                    authenticated.write(Authenticated);
-                }
-            }
-
-            for (_,server_connection) in network_connection.0.iter_mut(){
-                if server_connection.peers_connected.contains_key(&local_season_uuid.0.unwrap()){
-                    continue;
-                }
-
-                server_connection.peers_connected.insert(local_season_uuid.0.unwrap(),(Some(local_peer_id.0.unwrap()),true));
-            }
-
-        }
+        app.add_systems(First,(start_ports,check_peers_connected,listen_peers,check_peers_disconnected,check_port_disconnected).chain());
     }
 }
 
 pub fn start_ports(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    time: NetRes<Time>
-){
-    for (_,server_connection) in &mut network_connection.0 {
-        if let (Some(main_port), server_connection_shared_values) = server_connection.get_port_split(&0) {
-            main_port.start(server_connection_shared_values, &time);
-        }
-
-        let ports_amount = server_connection.get_ports_amount();
-
-        for port_id in 1..=ports_amount {
-            if let (Some(port),server_connection_shared_values) = server_connection.get_port_split(&port_id) {
-                port.start(server_connection_shared_values, &time);
-            }
-        }
-    }
-}
-
-pub fn check_connected_ports(
-    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut server_port_connected: MessageWriter<ServerPortConnected>
+    mut server_port_connected: MessageWriter<ServerPortConnected>,
 ){
     for (connection_id,server_connection) in &mut network_connection.0 {
-        if let Some(main_port) = server_connection.get_port(0) {
-            if main_port.connected() {
-                server_port_connected.write(ServerPortConnected{
-                    port_id: 0,
-                    connection_id: *connection_id,
-                });
-            }
-        }
+        if let (Some(main_port), network_port_shared_infos) = server_connection.get_port_split(0) {
+            let (started,started_now) = main_port.started();
 
-        let ports_amount = server_connection.get_ports_amount();
-
-        for port_id in 1..=ports_amount {
-            if let (Some(port),_) = server_connection.get_port_split(&port_id) {
-                if port.connected() {
+            if started {
+                if started_now {
+                    println!("Connected");
                     server_port_connected.write(ServerPortConnected{
-                        port_id,
+                        port_id: 0,
                         connection_id: *connection_id,
                     });
+                }
+                continue
+            }
+
+            if let Some(network_port_shared_infos) = network_port_shared_infos{
+                main_port.start(network_port_shared_infos);
+            }
+        }
+
+        let ports_amount = server_connection.get_ports_amount();
+
+        for port_id in 1..=ports_amount {
+            if let (Some(port),network_port_shared_infos) = server_connection.get_port_split(port_id) {
+                let (started,started_now) = port.started();
+
+                if started {
+                    if started_now {
+                        server_port_connected.write(ServerPortConnected{
+                            port_id,
+                            connection_id: *connection_id,
+                        });
+                    }
+                    continue
+                }
+
+                if let Some(network_port_shared_infos) = network_port_shared_infos{
+                    port.start(network_port_shared_infos);
                 }
             }
         }
     }
 }
 
-pub fn check_ports_down(
+pub fn check_peers_connected(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut server_port_disconnected: MessageWriter<ServerPortDisconnected>,
-    time: NetRes<Time>
+    mut anonymous_peers_accepted_on_port: MessageWriter<AnonymousPeersAcceptedOnPort>,
 ){
     for (connection_id,server_connection) in &mut network_connection.0 {
         if let Some(main_port) = server_connection.get_port(0) {
-            let (is_down, error) = main_port.check_connection_down();
-
-            if is_down {
-                server_port_disconnected.write(ServerPortDisconnected{
+            let peers_connected = main_port.peers_connected();
+            
+            if peers_connected.len() > 0 {
+                anonymous_peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
                     port_id: 0,
                     connection_id: *connection_id,
-                    error
+                    seasons_uuids: peers_connected,
                 });
-
-                if let (Some(main_port),server_connection_shared_values) = server_connection.get_port_split(&0) {
-                    main_port.reconnect(server_connection_shared_values, &time);
-                }
             }
         }
 
         let ports_amount = server_connection.get_ports_amount();
 
         for port_id in 1..=ports_amount {
-            if let (Some(port),server_connection_shared_values) = server_connection.get_port_split(&port_id) {
-                let (is_down, error) = port.check_connection_down();
+            if let Some(port) = server_connection.get_port(port_id) {
+                let peers_connected = port.peers_connected();
 
-                if is_down {
-                    server_port_disconnected.write(ServerPortDisconnected{
+                if peers_connected.len() > 0 {
+                    anonymous_peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
                         port_id,
                         connection_id: *connection_id,
-                        error
+                        seasons_uuids: peers_connected,
                     });
-
-                    port.reconnect(server_connection_shared_values, &time);
                 }
             }
         }
     }
 }
 
-pub fn start_accepting_ports_connections(
+pub fn listen_peers(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
 ){
     for (_,server_connection) in &mut network_connection.0 {
-        if let (Some(main_port),server_connection_shared_values) = server_connection.get_port_split(&0) {
-            main_port.accepting_connections(server_connection_shared_values);
+        if let (Some(main_port), network_port_shared_infos) = server_connection.get_port_split(0) {
+            if let Some(network_port_shared_infos) = network_port_shared_infos{
+                main_port.listen_peers(network_port_shared_infos);
+            }
         }
 
         let ports_amount = server_connection.get_ports_amount();
 
         for port_id in 1..=ports_amount {
-            if let (Some(port),server_connection_shared_values) = server_connection.get_port_split(&port_id) {
-                port.accepting_connections(server_connection_shared_values);
+            if let (Some(port),network_port_shared_infos) = server_connection.get_port_split(port_id) {
+                if let Some(network_port_shared_infos) = network_port_shared_infos{
+                    port.listen_peers(network_port_shared_infos);
+                }
             }
         }
     }
@@ -220,133 +179,71 @@ pub fn start_accepting_ports_connections(
 
 pub fn check_peers_disconnected(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut peer_dropped_server: MessageWriter<PeersDroppedServer>,
+    mut peers_dropped_server: MessageWriter<PeersDroppedServer>
 ){
     for (connection_id,server_connection) in &mut network_connection.0 {
         if let Some(main_port) = server_connection.get_port(0) {
-            let peers_disconnected = main_port.check_peers_dropped();
-            
-            if server_connection.is_authentication_connection() {
-                for (uuid,(_,_)) in peers_disconnected.iter() {
-                    server_connection.peers_connected.remove(uuid);
-                }
+            let peers_dropped = main_port.get_peers_disconnected();
+
+            if peers_dropped.len() > 0 {
+              peers_dropped_server.write(PeersDroppedServer{
+                  port_id: 0,
+                  connection_id: *connection_id,
+                  peers: peers_dropped,
+              });
             }
-            
-            peer_dropped_server.write(PeersDroppedServer{
-                port_id: 0,
-                connection_id: *connection_id,
-                peers: peers_disconnected,
-            });
         }
 
         let ports_amount = server_connection.get_ports_amount();
 
         for port_id in 1..=ports_amount {
-            if let (Some(port),_) = server_connection.get_port_split(&port_id) {
-                let peers_disconnected = port.check_peers_dropped();
+            if let Some(port) = server_connection.get_port(port_id) {
+                let peers_dropped = port.get_peers_disconnected();
 
-                peer_dropped_server.write(PeersDroppedServer{
-                    port_id,
-                    connection_id: *connection_id,
-                    peers: peers_disconnected,
-                });
-            }
-        }
-    }
-}
-
-pub fn check_ports_peers_accepted(
-    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut peers_accepted_on_port: MessageWriter<AnonymousPeersAcceptedOnPort>
-){
-    for (connection_id,server_connection) in &mut network_connection.0 {
-        let semaphore = server_connection.semaphore();
-        let disconnect_peer_if_full = server_connection.disconnect_peer_if_full();
-
-        if let Some(main_port) = server_connection.get_port(0) {
-            let seasons_uuids = main_port.anonymous_peers_accepted(semaphore,disconnect_peer_if_full);
-
-            if server_connection.is_authentication_connection() {
-                for uuid in &seasons_uuids {
-                    server_connection.peers_connected.insert(*uuid,(None,false));
-                }
-            }
-
-            peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
-                port_id: 0,
-                connection_id: *connection_id,
-                seasons_uuids
-            });
-        }
-
-        let ports_amount = server_connection.get_ports_amount();
-
-        for port_id in 1..=ports_amount {
-            let semaphore = server_connection.semaphore();
-
-            if let (Some(port),_) = server_connection.get_port_split(&port_id) {
-                let seasons_uuids = port.anonymous_peers_accepted(semaphore,disconnect_peer_if_full);
-
-                peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
-                    port_id,
-                    connection_id: *connection_id,
-                    seasons_uuids
-                });
-            }
-        }
-    }
-}
-
-pub fn check_peers_queue_accepted(
-    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut peers_accepted_on_port: MessageWriter<AnonymousPeersAcceptedOnPort>
-){
-    for (connection_id,server_connection) in &mut network_connection.0 {
-        if let Some(semaphore) = server_connection.semaphore(){
-            if let Some(main_port) = server_connection.get_port(0) {
-                let seasons_uuids = main_port.check_peers_on_queue_accepted(Arc::clone(&semaphore));
-
-                peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
-                    port_id: 0,
-                    connection_id: *connection_id,
-                    seasons_uuids
-                });
-            }
-
-            let ports_amount = server_connection.get_ports_amount();
-
-            for port_id in 1..=ports_amount {
-                if let (Some(port),_) = server_connection.get_port_split(&port_id) {
-                    let seasons_uuids = port.check_peers_on_queue_accepted(Arc::clone(&semaphore));
-
-                    peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
+                if peers_dropped.len() > 0 {
+                    peers_dropped_server.write(PeersDroppedServer{
                         port_id,
                         connection_id: *connection_id,
-                        seasons_uuids
+                        peers: peers_dropped,
                     });
                 }
             }
-        }else{
-            continue;
         }
     }
 }
 
-pub fn start_listening_peers(
+pub fn check_port_disconnected(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
+    mut server_port_disconnected: MessageWriter<ServerPortDisconnected>
 ){
-    for (_,server_connection) in &mut network_connection.0 {
-        if let (Some(main_port),server_connection_shared_values) = server_connection.get_port_split(&0) {
-            main_port.start_listening_anonymous_peers(server_connection_shared_values);
-            main_port.start_listening_authenticated_peers(server_connection_shared_values);
+    for (connection_id,server_connection) in &mut network_connection.0 {
+        if let Some(main_port) = server_connection.get_port(0) {
+            let (disconnected,error,was_connected) = main_port.disconnected();
+
+            if disconnected {
+                server_port_disconnected.write(ServerPortDisconnected{
+                    port_id: 0,
+                    connection_id: *connection_id,
+                    error,
+                    was_connected
+                });
+            }
         }
 
         let ports_amount = server_connection.get_ports_amount();
 
         for port_id in 1..=ports_amount {
-            if let (Some(port),server_connection_shared_values) = server_connection.get_port_split(&port_id) {
-                port.start_listening_anonymous_peers(server_connection_shared_values);
-                port.start_listening_authenticated_peers(server_connection_shared_values);
+            if let Some(port) = server_connection.get_port(port_id) {
+                let (disconnected,error,was_connected) = port.disconnected();
+
+                if disconnected {
+                    server_port_disconnected.write(ServerPortDisconnected{
+                        port_id,
+                        connection_id: *connection_id,
+                        error,
+                        was_connected
+                    });
+                }
             }
         }
     }

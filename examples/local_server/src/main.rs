@@ -1,23 +1,20 @@
 use bevy::DefaultPlugins;
 use bevy::prelude::{App, Startup};
 use client::plugins::network::ClientNetworkPlugin;
-use client::ports::tcp::TcpConfigsClient;
+use client::ports::tcp::TcpClientSettings;
 use server::plugins::network::ServerNetworkPlugin;
-use server::ports::tcp::TcpConfigsServer;
+use server::ports::tcp::TcpServerSettings;
 use shared::NetResMut;
 use shared::plugins::authentication::AuthenticationPlugin;
 use shared::plugins::messaging::MessagingPlugin;
-use shared::plugins::network::{ClientConnection, NetworkConnection, NetworkPlugin, ServerConnection};
+use shared::plugins::network::{ClientConnection, DefaultNetworkPortSharedInfosClient, DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
 
 fn start_connection(
-    mut server_network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     mut client_network_connection: NetResMut<NetworkConnection<ClientConnection>>,
+    mut server_network_connection: NetResMut<NetworkConnection<ServerConnection>>,
 ) {
-    server_network_connection.start_connection(0, 0, true, Box::new(TcpConfigsServer::default()),true);
-    server_network_connection.create_secondary_port(0,1,Box::new(TcpConfigsServer::default().with_port(8081)));
-
-    client_network_connection.start_connection(0,true,Box::new(TcpConfigsClient::default()));
-    client_network_connection.create_secondary_port(0,1,Box::new(TcpConfigsClient::default().with_port(8081)));
+    client_network_connection.start_connection::<DefaultNetworkPortSharedInfosClient>(0, Box::new(TcpClientSettings::default()),true);
+    server_network_connection.start_connection::<DefaultNetworkPortSharedInfosServer>(0, 0, Box::new(TcpServerSettings::default()),true);
 }
 
 fn main() {
