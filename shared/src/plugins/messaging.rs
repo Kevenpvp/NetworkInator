@@ -10,6 +10,17 @@ use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
 use crate::plugins::network::{ClientConnection, CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
 
+#[cfg(target_arch = "wasm32")]
+pub trait MessageTrait: 'static + ErasedSerialize + Debug {
+    fn deserialize(data: &[u8]) -> Self
+    where
+        Self: Sized;
+    fn as_authentication(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub trait MessageTrait: 'static + ErasedSerialize + Send + Sync + Debug {
     fn deserialize(data: &[u8]) -> Self where Self: Sized;
     fn as_authentication(&self) -> bool {
@@ -21,11 +32,25 @@ serialize_trait_object!(MessageTrait);
 
 pub struct MessagingPlugin;
 
+#[cfg(target_arch = "wasm32")]
+pub struct MessageFunctionsServer{
+    deserialize: fn(&[u8]) -> Box<dyn Any>,
+    dispatch_message: fn(world: &mut World, message: Box<dyn Any>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
+}
+
+#[cfg(target_arch = "wasm32")]
+pub struct MessageFunctionsClient{
+    deserialize: fn(&[u8]) -> Box<dyn Any>,
+    dispatch_message: fn(world: &mut World, message: Box<dyn Any>, connection_id: u32, port_id: u32)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub struct MessageFunctionsServer{
     deserialize: fn(&[u8]) -> Box<dyn Any + Send + Sync>,
     dispatch_message: fn(world: &mut World, message: Box<dyn Any + Send + Sync>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct MessageFunctionsClient{
     deserialize: fn(&[u8]) -> Box<dyn Any + Send + Sync>,
     dispatch_message: fn(world: &mut World, message: Box<dyn Any + Send + Sync>, connection_id: u32, port_id: u32)
@@ -330,12 +355,47 @@ fn check_messages_from_server(
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn deserialize_message<T: MessageTrait>(bytes: &[u8]) -> Box<dyn Any> {
+    let message = T::deserialize(bytes);
+
+    Box::new(message)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn deserialize_message<T: MessageTrait>(bytes: &[u8]) -> Box<dyn Any + Send + Sync> {
     let message = T::deserialize(bytes);
 
     Box::new(message)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn dispatch_message_server<T: MessageTrait>(world: &mut World, message: Box<dyn Any>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid)  {
+    let message = match  message.downcast::<T>(){
+        Ok(message) => message,
+        Err(error) => { println!("Failed to downcast message type: {:?}", error); return; }
+    };
+
+    if let Some(peer_uuid) = peer_uuid{
+        world.write_message(MessageReceivedFromPeer {
+            message: *message,
+            peer_uuid,
+            session_uuid: session_id,
+            port_id,
+            connection_id,
+        });
+    }else {
+        world.write_message(MessageReceivedFromAnonymousPeer {
+            message: *message,
+            session_uuid: session_id,
+            port_id,
+            connection_id,
+        });
+    }
+}
+
+
+#[cfg(not(target_arch = "wasm32"))]
 fn dispatch_message_server<T: MessageTrait>(world: &mut World, message: Box<dyn Any + Send + Sync>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid)  {
     let message = match  message.downcast::<T>(){
         Ok(message) => message,
@@ -360,6 +420,18 @@ fn dispatch_message_server<T: MessageTrait>(world: &mut World, message: Box<dyn 
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn dispatch_message_client<T: MessageTrait>(world: &mut World, message: Box<dyn Any>, connection_id: u32, port_id: u32)  {
+    let message = message.downcast::<T>().expect("Failed to downcast");
+
+    world.write_message(MessageReceivedFromServer{
+        message: *message,
+        port_id,
+        connection_id,
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn dispatch_message_client<T: MessageTrait>(world: &mut World, message: Box<dyn Any + Send + Sync>, connection_id: u32, port_id: u32)  {
     let message = message.downcast::<T>().expect("Failed to downcast");
 

@@ -4,6 +4,7 @@ use bevy::app::App;
 use bevy::prelude::{Plugin, Resource};
 use tokio::runtime::Runtime;
 use std::io::{Error};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use bevy::asset::uuid::Uuid;
 use postcard::from_bytes;
@@ -59,6 +60,10 @@ pub trait ServerPortTrait{
     fn authenticate_peers(&mut self, _current_season_uuid: Uuid, _new_peer_id: Uuid, _new_season_uuid: Option<Uuid>) {
 
     }
+
+    fn get_peer_socket_socket_addr(&self, _peer_uuid: &Uuid) -> Option<SocketAddr> {
+        None
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -107,6 +112,10 @@ pub trait ServerPortTrait: Send + Sync{
 
     fn is_peer_connected(&self, _peer_uuid: &Uuid) -> bool {
         false
+    }
+    
+    fn get_peer_socket_socket_addr(&self, _peer_uuid: &Uuid) -> Option<SocketAddr> {
+        None
     }
 }
 
