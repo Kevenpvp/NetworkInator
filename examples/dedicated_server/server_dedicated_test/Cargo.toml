@@ -7,3 +7,6 @@ edition.workspace = true
 server = {path = "../../../server"}
 shared = {path = "../../../shared"}
 bevy = { workspace = true, features = ["dynamic_linking"] }
+message_pro_macro = { path = "../../../message_pro_macro" }
+serde = { workspace = true }
+postcard = { workspace = true }

@@ -2,7 +2,7 @@ use crate::plugins::messaging::{ClientConnectionParams, MessageReceivedFromAnony
 use std::collections::HashMap;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
-use bevy::prelude::{IntoScheduleConfigs, MessageReader, Plugin, PreUpdate, Resource, Update};
+use bevy::prelude::{IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin, PreUpdate, Resource, Update};
 use serde::{Deserialize, Serialize};
 use message_pro_macro::ConnectionMessage;
 use crate::{NetRes, NetResMut};
@@ -13,13 +13,13 @@ pub struct AuthenticationPlugin;
 #[derive(Resource,Default)]
 pub struct AuthenticatedSessions(HashMap<Uuid,Uuid>);
 
-#[derive(Serialize,Deserialize,ConnectionMessage,Debug)]
+#[derive(Serialize,Deserialize,ConnectionMessage)]
 #[connection_message(authentication = true)]
 struct AuthenticationMessage{
     session_uuid: Option<Uuid>,
 }
 
-#[derive(Serialize,Deserialize,ConnectionMessage,Debug)]
+#[derive(Serialize,Deserialize,ConnectionMessage)]
 struct AuthenticatedFromServer{
     session_uuid: Uuid,
     peer_uuid: Uuid
@@ -30,6 +30,12 @@ pub struct LocalPeerUUID(Option<Uuid>);
 
 #[derive(Resource,Default)]
 pub struct LocalSeasonUUID(Option<Uuid>);
+
+#[derive(Message)]
+pub struct ClientPortAuthenticated{
+    pub port_id: u32,
+    pub connection_id: u32
+}
 
 impl Plugin for AuthenticationPlugin{
     fn build(&self, app: &mut App) {
@@ -57,6 +63,7 @@ impl Plugin for AuthenticationPlugin{
         }
 
         if is_client {
+            app.add_message::<ClientPortAuthenticated>();
             app.init_resource::<LocalPeerUUID>();
             app.init_resource::<LocalSeasonUUID>();
             app.add_systems(Update,(authenticate_port,check_port_authenticated).chain());
@@ -219,6 +226,7 @@ fn check_port_authenticated(
     mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
     mut local_peer_uuid: NetResMut<LocalPeerUUID>,
     mut local_season_uuid: NetResMut<LocalSeasonUUID>,
+    mut client_port_authenticated: MessageWriter<ClientPortAuthenticated>,
 ){
     for ev in authenticated_from_server.read(){
         let authenticated_from_server = &ev.message;
@@ -232,6 +240,11 @@ fn check_port_authenticated(
             if let Some(port) = connection.get_port(port_id) {
                 if !port.is_port_authenticated() {
                     port.authenticate_port();
+
+                    client_port_authenticated.write(ClientPortAuthenticated{
+                        port_id,
+                        connection_id,
+                    });
                 }
             }
         }
@@ -254,12 +267,17 @@ fn authenticate_port(
             pending.insert(*connection_id,Vec::from([0]));
         }else {
             if let Some(main_port) = connection.get_port(0) {
-                if main_port.is_port_authenticated() { continue }
-
-                pending.insert(*connection_id,Vec::from([0]));
+                if !main_port.is_port_authenticated() {
+                    pending.insert(*connection_id,Vec::from([0]));
+                }
             }
 
             let ports_amount = connection.get_ports_amount();
+
+            if pending.get(&connection_id).is_none(){
+                pending.insert(*connection_id,Vec::new());
+            }
+
             let vec = pending.get_mut(&connection_id).unwrap();
 
             for port_id in 1..=ports_amount {

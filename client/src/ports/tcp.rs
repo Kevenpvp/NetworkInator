@@ -41,6 +41,14 @@ pub struct TcpClientPort{
     connecting_downed_sender: Arc<UnboundedSender<(Error,bool)>>,
 }
 
+impl TcpClientSettings {
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+        
+        self
+    }
+}
+
 impl Default for TcpClientSettings{
     fn default()->Self{
         TcpClientSettings{

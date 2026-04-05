@@ -1896,6 +1896,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "client",
+ "message_pro_macro",
+ "postcard",
+ "serde",
  "shared",
 ]
 
@@ -4423,6 +4426,9 @@ name = "server_dedicated_test"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "message_pro_macro",
+ "postcard",
+ "serde",
  "server",
  "shared",
 ]

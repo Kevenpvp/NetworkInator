@@ -7,6 +7,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
 use std::io::{Error, ErrorKind};
 use std::sync::{Arc};
+use std::time::{Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -30,6 +31,7 @@ pub struct PeerConnected{
     owned_write_half: Arc<Mutex<OwnedWriteHalf>>,
     socket_addr: SocketAddr,
     internal_buffer: Vec<u8>,
+    non_authenticated_time: f32
 }
 
 pub struct TcpServerPort{
@@ -55,6 +57,14 @@ pub struct TcpServerPort{
 
     peer_disconnected_receiver: UnboundedReceiver<(Uuid,Option<Uuid>,Error)>,
     peer_disconnected_sender: Arc<UnboundedSender<(Uuid,Option<Uuid>,Error)>>,
+}
+
+impl TcpServerSettings {
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+
+        self
+    }
 }
 
 impl Default for TcpServerSettings {
@@ -357,6 +367,19 @@ impl ServerPortTrait for TcpServerPort{
             }
         }
 
+        let now = Instant::now().elapsed().as_millis_f32();
+
+        self.peers_connected.retain(|season_uuid, peer_connected| {
+            if peer_connected.peer_id.is_some() { return true }
+
+            if now - peer_connected.non_authenticated_time >= 120.0 {
+                peers.insert(*season_uuid, (peer_connected.peer_id, Error::new(ErrorKind::TimedOut, "Didnt authenticated in time")));
+                return false
+            };
+
+            return true
+        });
+
         peers
     }
 
@@ -387,7 +410,8 @@ impl ServerPortTrait for TcpServerPort{
                         owned_read_half,
                         owned_write_half: Arc::new(Mutex::from(owned_write_half)),
                         socket_addr,
-                        internal_buffer: Vec::new()
+                        internal_buffer: Vec::new(),
+                        non_authenticated_time: Instant::now().elapsed().as_millis_f32()
                     });
 
                     peers.push(season_uuid);
@@ -429,7 +453,7 @@ impl ServerPortTrait for TcpServerPort{
             println!("Peer authenticated");
             
             if let Some(new_season_uuid) = new_season_uuid{
-                let peer_connected = self.peers_connected.remove(&new_season_uuid).unwrap();
+                let peer_connected = self.peers_connected.remove(&current_season_uuid).unwrap();
 
                 self.peers_connected.insert(new_season_uuid,peer_connected);
                 self.peers_authenticated.insert(new_peer_id,new_season_uuid);
@@ -449,5 +473,15 @@ impl ServerPortTrait for TcpServerPort{
 
     fn is_peer_connected(&self, peer_uuid: &Uuid) -> bool {
         self.peers_authenticated.contains_key(peer_uuid)
+    }
+
+    fn disconnect_peer_or_season(&mut self, uuid: &Uuid) {
+        if let Some(season_uuid) = self.peers_authenticated.get(uuid) {
+            if let Some(peer_connected) = self.peers_connected.remove(season_uuid) {
+                drop(peer_connected);
+            }
+        }else if let Some(peer_connected) = self.peers_connected.remove(uuid) {
+            drop(peer_connected);
+        }
     }
 }

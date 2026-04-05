@@ -76,11 +76,10 @@ pub fn start_ports(
                         connection_id: *connection_id,
                     });
                 }
-                continue
-            }
-
-            if let Some(network_port_shared_infos) = network_port_shared_infos{
-                main_port.start(network_port_shared_infos);
+            }else{
+                if let Some(network_port_shared_infos) = network_port_shared_infos{
+                    main_port.start(network_port_shared_infos);
+                }
             }
         }
 

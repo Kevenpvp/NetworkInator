@@ -64,6 +64,10 @@ pub trait ServerPortTrait{
     fn get_peer_socket_socket_addr(&self, _peer_uuid: &Uuid) -> Option<SocketAddr> {
         None
     }
+
+    fn disconnect_peer_or_season(&mut self, _uuid: &Uuid) {
+
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -116,6 +120,10 @@ pub trait ServerPortTrait: Send + Sync{
     
     fn get_peer_socket_socket_addr(&self, _peer_uuid: &Uuid) -> Option<SocketAddr> {
         None
+    }
+
+    fn disconnect_peer_or_season(&mut self, _uuid: &Uuid) {
+
     }
 }
 
@@ -307,6 +315,22 @@ impl NetworkPortSharedInfos for DefaultNetworkPortSharedInfosClient {
     }
 }
 
+impl DefaultNetworkPortSharedInfosServer {
+    pub fn get_semaphore(&self) -> &Option<Arc<Semaphore>> {
+        &self.semaphore
+    }
+
+    pub fn get_runtime(&self) -> &Option<Runtime> {
+        &self.runtime
+    }
+}
+
+impl DefaultNetworkPortSharedInfosClient {
+    pub fn get_runtime(&self) -> &Option<Runtime> {
+        &self.runtime
+    }
+}
+
 impl ServerConnection {
     pub fn create_connection(max_connections: u32, settings: Box<dyn ServerSettingsPort>, authentication_connection: bool) -> Option<Self> {
         let mut port = settings.create_port();
@@ -325,6 +349,15 @@ impl ServerConnection {
         };
 
         Some(server_connection)
+    }
+
+    pub fn close_port(&mut self, port_id: u32) {
+        if port_id == 0 {
+            self.close();
+        }else if let Some(mut port) = self.secondary_ports.remove(&port_id) {
+            port.close();
+            drop(port);
+        }
     }
 
     pub fn close(&mut self){
@@ -376,6 +409,23 @@ impl ServerConnection {
     pub fn is_authentication_connection(&self) -> bool {
         self.authentication_connection
     }
+
+    pub fn disconnect_peer_or_season(&mut self, uuid: &Uuid){
+        let ports_amount = self.get_ports_amount();
+
+        for port_id in 0..=ports_amount {
+            if let Some(port) = self.get_port(port_id) {
+                port.disconnect_peer_or_season(uuid);
+            }
+        }
+    }
+
+    pub fn open_secondary_port(&mut self, settings: Box<dyn ServerSettingsPort>){
+        let ports_amount = self.get_ports_amount();
+        let port = settings.create_port();
+
+        self.secondary_ports.insert(ports_amount + 1, port);
+    }
 }
 
 impl ClientConnection {
@@ -395,6 +445,15 @@ impl ClientConnection {
         };
 
         Some(client_connection)
+    }
+
+    pub fn close_port(&mut self, port_id: u32) {
+        if port_id == 0 {
+            self.close();
+        }else if let Some(mut port) = self.secondary_ports.remove(&port_id) {
+            port.close();
+            drop(port);
+        }
     }
 
     pub fn close(&mut self){
@@ -442,21 +501,12 @@ impl ClientConnection {
     pub fn is_authentication_connection(&self) -> bool {
         self.authentication_connection
     }
-}
 
-impl DefaultNetworkPortSharedInfosServer {
-    pub fn get_semaphore(&self) -> &Option<Arc<Semaphore>> {
-        &self.semaphore
-    }
+    pub fn open_secondary_port(&mut self, settings: Box<dyn ClientSettingsPort>){
+        let ports_amount = self.get_ports_amount();
+        let port = settings.create_port();
 
-    pub fn get_runtime(&self) -> &Option<Runtime> {
-        &self.runtime
-    }
-}
-
-impl DefaultNetworkPortSharedInfosClient {
-    pub fn get_runtime(&self) -> &Option<Runtime> {
-        &self.runtime
+        self.secondary_ports.insert(ports_amount + 1, port);
     }
 }
 
@@ -477,6 +527,12 @@ impl NetworkConnection<ServerConnection> {
         }
     }
 
+    pub fn open_secondary_port(&mut self, connection_id: u32, settings: Box<dyn ServerSettingsPort>){
+        if let Some(connection) = self.0.get_mut(&connection_id) {
+            connection.open_secondary_port(settings);
+        }
+    }
+
     pub(crate) fn send_message(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, peer_id: Uuid, send_args: Option<Box<dyn Any>>) {
         if let Some(server_connection) = self.0.get_mut(&connection_id){
             if let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
@@ -485,10 +541,22 @@ impl NetworkConnection<ServerConnection> {
         }
     }
 
+    pub fn close_port(&mut self, connection_id: u32, port_id: u32) {
+        if let Some(connection) = self.0.get_mut(&connection_id) {
+            connection.close_port(port_id);
+        }
+    }
+
     pub fn close_connection(&mut self, connection_id: u32) {
         if let Some(mut server_connection) = self.0.remove(&connection_id){
             server_connection.close();
             drop(server_connection);
+        }
+    }
+
+    pub fn disconnect_peer_or_season(&mut self, connection_id: u32, uuid: &Uuid) {
+        if let Some(connection) = self.0.get_mut(&connection_id){
+            connection.disconnect_peer_or_season(uuid);
         }
     }
 }
@@ -510,11 +578,23 @@ impl NetworkConnection<ClientConnection> {
         }
     }
 
+    pub fn open_secondary_port(&mut self, connection_id: u32, settings: Box<dyn ClientSettingsPort>){
+        if let Some(connection) = self.0.get_mut(&connection_id) {
+            connection.open_secondary_port(settings);
+        }
+    }
+
     pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>) {
         if let Some(client_connection) = self.0.get_mut(&connection_id){
             if let (Some(port),Some(network_port_shared_infos)) = client_connection.get_port_split(port_id) {
                 port.send_message_for_server(message_id, network_port_shared_infos, message, send_args);
             }
+        }
+    }
+
+    pub fn close_port(&mut self, connection_id: u32, port_id: u32) {
+        if let Some(connection) = self.0.get_mut(&connection_id) {
+            connection.close_port(port_id);
         }
     }
 

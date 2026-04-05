@@ -82,17 +82,16 @@ pub fn start_ports(
 
             if started {
                 if started_now {
-                    println!("Connected");
+                    println!("Connected main port");
                     server_port_connected.write(ServerPortConnected{
                         port_id: 0,
                         connection_id: *connection_id,
                     });
                 }
-                continue
-            }
-
-            if let Some(network_port_shared_infos) = network_port_shared_infos{
-                main_port.start(network_port_shared_infos);
+            }else {
+                if let Some(network_port_shared_infos) = network_port_shared_infos{
+                    main_port.start(network_port_shared_infos);
+                }
             }
         }
 
@@ -104,6 +103,7 @@ pub fn start_ports(
 
                 if started {
                     if started_now {
+                        println!("Connected secondary port");
                         server_port_connected.write(ServerPortConnected{
                             port_id,
                             connection_id: *connection_id,

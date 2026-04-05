@@ -1,6 +1,5 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::fmt::{Debug};
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
@@ -11,7 +10,7 @@ use crate::{NetRes, NetResMut};
 use crate::plugins::network::{ClientConnection, CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
-pub trait MessageTrait: 'static + ErasedSerialize + Debug {
+pub trait MessageTrait: 'static + ErasedSerialize {
     fn deserialize(data: &[u8]) -> Self
     where
         Self: Sized;
@@ -21,7 +20,7 @@ pub trait MessageTrait: 'static + ErasedSerialize + Debug {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub trait MessageTrait: 'static + ErasedSerialize + Send + Sync + Debug {
+pub trait MessageTrait: 'static + ErasedSerialize + Send + Sync {
     fn deserialize(data: &[u8]) -> Self where Self: Sized;
     fn as_authentication(&self) -> bool {
         false
