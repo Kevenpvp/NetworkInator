@@ -4,8 +4,12 @@ members = ["examples/dedicated_server/client_dedicated_test", "examples/dedicate
 
 [workspace.package]
 version = "0.1.0"
+authors = ["TenerPVP"]
 edition = "2024"
 publish = false
+license = "MIT"
+repository = "https://github.com/Kevenpvp/NetworkInator"
+homepage = "https://github.com/Kevenpvp/NetworkInator"
 
 [profile.dev]
 opt-level = 1

@@ -2,7 +2,13 @@
 name = "message_pro_macro"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 publish = true
+
+description = "Macros for NetworkInator"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [lib]
 proc-macro = true
