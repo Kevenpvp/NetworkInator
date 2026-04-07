@@ -161,7 +161,7 @@ impl ServerPortTrait for UdpServerPort {
                 let mut buf = vec![0u8; buffer_size];
 
                 loop {
-                    match udp_socket.try_recv_from(&mut buf) {
+                    match udp_socket.recv_from(&mut buf).await {
                         Ok((len, addr)) => {
                             let buff: Vec<u8> = buf[..len].to_vec();
 
