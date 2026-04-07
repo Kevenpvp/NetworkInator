@@ -1,9 +1,9 @@
 use std::io::Error;
 use bevy::app::App;
 use bevy::prelude::{error, First, IntoScheduleConfigs, Message, MessageWriter, Plugin};
-use shared::{NetRes, NetResMut};
-use shared::plugins::messaging::MessagingPlugin;
-use shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSeasonUUID, NetworkConnection, NetworkType, ServerConnection};
+use crate::{NetRes, NetResMut};
+use crate::shared::plugins::messaging::MessagingPlugin;
+use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSeasonUUID, NetworkConnection, NetworkType, ServerConnection};
 
 pub struct ClientNetworkPlugin;
 

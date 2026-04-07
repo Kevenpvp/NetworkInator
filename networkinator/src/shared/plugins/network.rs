@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bevy::asset::uuid::Uuid;
 use postcard::from_bytes;
 use tokio::sync::Semaphore;
-use crate::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
 
 pub struct NetworkPlugin;
 

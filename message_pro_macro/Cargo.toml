@@ -2,6 +2,7 @@
 name = "message_pro_macro"
 version.workspace = true
 edition.workspace = true
+publish = true
 
 [lib]
 proc-macro = true

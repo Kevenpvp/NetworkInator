@@ -4,16 +4,16 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use bevy::log::warn;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
 use std::io::{Error, ErrorKind};
 use std::sync::{Arc};
 use std::time::{Duration, Instant};
+use bevy::asset::uuid::Uuid;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
-use uuid::Uuid;
-use shared::plugins::messaging::{MessageInfos, MessageTrait};
-use shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
+use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
 pub struct TcpServerSettings{
     address: IpAddr,

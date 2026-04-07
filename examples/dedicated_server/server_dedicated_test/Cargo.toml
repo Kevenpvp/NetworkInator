@@ -2,10 +2,10 @@
 name = "server_dedicated_test"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
-server = {path = "../../../server"}
-shared = {path = "../../../shared"}
+networkinator = {path = "../../../networkinator"}
 bevy = { workspace = true, features = ["dynamic_linking"] }
 message_pro_macro = { path = "../../../message_pro_macro" }
 serde = { workspace = true }

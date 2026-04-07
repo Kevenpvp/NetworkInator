@@ -1881,25 +1881,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "postcard",
- "shared",
- "tokio",
-]
-
-[[package]]
 name = "client_dedicated_test"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "client",
  "message_pro_macro",
+ "networkinator",
  "postcard",
  "serde",
- "shared",
 ]
 
 [[package]]
@@ -3179,9 +3168,7 @@ name = "local_server"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "client",
- "server",
- "shared",
+ "networkinator",
 ]
 
 [[package]]
@@ -3398,6 +3385,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "networkinator"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "erased-serde",
+ "message_pro_macro",
+ "postcard",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -4410,27 +4409,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "server"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "postcard",
- "serde",
- "shared",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "server_dedicated_test"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "message_pro_macro",
+ "networkinator",
  "postcard",
  "serde",
- "server",
- "shared",
 ]
 
 [[package]]
@@ -4440,18 +4426,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shared"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "erased-serde",
- "message_pro_macro",
- "postcard",
- "serde",
- "tokio",
 ]
 
 [[package]]

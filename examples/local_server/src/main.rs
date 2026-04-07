@@ -1,13 +1,13 @@
 use bevy::DefaultPlugins;
 use bevy::prelude::{App, Startup};
-use client::plugins::network::ClientNetworkPlugin;
-use client::ports::tcp::TcpClientSettings;
-use server::plugins::network::ServerNetworkPlugin;
-use server::ports::tcp::TcpServerSettings;
-use shared::NetResMut;
-use shared::plugins::authentication::AuthenticationPlugin;
-use shared::plugins::messaging::MessagingPlugin;
-use shared::plugins::network::{ClientConnection, DefaultNetworkPortSharedInfosClient, DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
+use networkinator::client::plugins::network::ClientNetworkPlugin;
+use networkinator::client::ports::tcp::TcpClientSettings;
+use networkinator::NetResMut;
+use networkinator::server::plugins::network::ServerNetworkPlugin;
+use networkinator::server::ports::tcp::TcpServerSettings;
+use networkinator::shared::plugins::authentication::AuthenticationPlugin;
+use networkinator::shared::plugins::messaging::MessagingPlugin;
+use networkinator::shared::plugins::network::{ClientConnection, DefaultNetworkPortSharedInfosClient, DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
 
 fn start_connection(
     mut client_network_connection: NetResMut<NetworkConnection<ClientConnection>>,

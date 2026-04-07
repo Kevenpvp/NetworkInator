@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::io::Error;
 use bevy::app::App;
+use bevy::asset::uuid::Uuid;
 use bevy::log::{error};
 use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageWriter, Plugin};
-use uuid::Uuid;
-use shared::{NetResMut};
-use shared::plugins::messaging::MessagingPlugin;
-use shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
+use crate::NetResMut;
+use crate::shared::plugins::messaging::MessagingPlugin;
+use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
 
 pub struct ServerNetworkPlugin;
 

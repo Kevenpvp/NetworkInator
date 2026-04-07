@@ -9,9 +9,9 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
-use shared::plugins::messaging::{MessageInfos, MessageTrait};
-use shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
-use shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
+use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
 pub struct TcpClientSettings{
     address: IpAddr,

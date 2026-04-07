@@ -1,4 +1,4 @@
-use crate::plugins::messaging::{ClientConnectionParams, MessageReceivedFromAnonymousPeer, MessageReceivedFromPeer, MessageReceivedFromServer, MessageTrait, MessageTraitPlugin, ServerConnectionParams};
+use crate::shared::plugins::messaging::{ClientConnectionParams, MessageReceivedFromAnonymousPeer, MessageReceivedFromPeer, MessageReceivedFromServer, MessageTrait, MessageTraitPlugin, ServerConnectionParams};
 use std::collections::HashMap;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
@@ -6,7 +6,7 @@ use bevy::prelude::{IntoScheduleConfigs, Message, MessageReader, MessageWriter, 
 use serde::{Deserialize, Serialize};
 use message_pro_macro::ConnectionMessage;
 use crate::{NetRes, NetResMut};
-use crate::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSeasonUUID, NetworkConnection, NetworkType, ServerConnection};
+use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSeasonUUID, NetworkConnection, NetworkType, ServerConnection};
 
 pub struct AuthenticationPlugin;
 

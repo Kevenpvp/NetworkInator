@@ -2,9 +2,8 @@
 name = "local_server"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
-client = {path = "../../client"}
-shared = {path = "../../shared"}
-server = {path = "../../server"}
+networkinator = { path = "../../networkinator" }
 bevy = { workspace = true, features = ["dynamic_linking"]  }

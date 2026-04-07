@@ -1,16 +1,15 @@
+use networkinator::shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin, MessagingPlugin};
 use bevy::app::Update;
-use shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin};
 use bevy::DefaultPlugins;
 use bevy::prelude::{App, MessageReader, Startup};
 use serde::{Deserialize, Serialize};
 use message_pro_macro::ConnectionMessage;
-use server::plugins::network::ServerNetworkPlugin;
-use server::ports::tcp::TcpServerSettings;
-use server::ports::udp::UdpServerSettings;
-use shared::NetResMut;
-use shared::plugins::authentication::AuthenticationPlugin;
-use shared::plugins::messaging::MessagingPlugin;
-use shared::plugins::network::{DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
+use networkinator::NetResMut;
+use networkinator::server::plugins::network::ServerNetworkPlugin;
+use networkinator::server::ports::tcp::TcpServerSettings;
+use networkinator::server::ports::udp::UdpServerSettings;
+use networkinator::shared::plugins::authentication::AuthenticationPlugin;
+use networkinator::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
 
 #[derive(Serialize,Deserialize,ConnectionMessage)]
 pub struct HiMessage(String);

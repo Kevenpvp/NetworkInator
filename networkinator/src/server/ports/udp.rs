@@ -4,13 +4,13 @@ use std::io::{Error};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use bevy::asset::uuid::Uuid;
 use bevy::log::warn;
 use tokio::net::{UdpSocket};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use uuid::Uuid;
-use shared::plugins::messaging::{MessageInfos, MessageTrait};
-use shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
-use shared::port_systems::inject_extract_uuid::extract_uuid;
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
+use crate::shared::port_systems::inject_extract_uuid::extract_uuid;
 
 pub struct UdpServerSettings {
     address: IpAddr,

@@ -1,15 +1,14 @@
-use shared::plugins::messaging::{MessageTrait, MessageTraitPlugin};
+use networkinator::shared::plugins::messaging::{ClientConnectionParams, MessageTrait, MessageTraitPlugin, MessagingPlugin};
 use bevy::DefaultPlugins;
 use bevy::prelude::{App, MessageReader, Startup, Update};
-use client::plugins::network::{ClientNetworkPlugin};
-use client::ports::tcp::TcpClientSettings;
 use serde::{Deserialize, Serialize};
-use client::ports::udp::UdpClientSettings;
 use message_pro_macro::ConnectionMessage;
-use shared::{NetRes, NetResMut};
-use shared::plugins::authentication::{AuthenticationPlugin, ClientPortAuthenticated};
-use shared::plugins::messaging::{ClientConnectionParams, MessagingPlugin};
-use shared::plugins::network::{ClientConnection, DefaultNetworkPortSharedInfosClient, LocalSeasonUUID, NetworkConnection, NetworkPlugin};
+use networkinator::client::ports::tcp::TcpClientSettings;
+use networkinator::client::ports::udp::UdpClientSettings;
+use networkinator::{NetRes, NetResMut};
+use networkinator::client::plugins::network::ClientNetworkPlugin;
+use networkinator::shared::plugins::authentication::{AuthenticationPlugin, ClientPortAuthenticated};
+use networkinator::shared::plugins::network::{ClientConnection, DefaultNetworkPortSharedInfosClient, LocalSeasonUUID, NetworkConnection, NetworkPlugin};
 
 #[derive(Serialize,Deserialize,ConnectionMessage)]
 pub struct HiMessage(String);

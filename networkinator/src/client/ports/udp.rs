@@ -7,9 +7,9 @@ use bevy::asset::uuid::Uuid;
 use bevy::log::warn;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use shared::plugins::messaging::{MessageInfos, MessageTrait};
-use shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
-use shared::port_systems::inject_extract_uuid::inject_uuid;
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
+use crate::shared::port_systems::inject_extract_uuid::inject_uuid;
 
 pub struct UdpClientSettings {
     address: IpAddr,

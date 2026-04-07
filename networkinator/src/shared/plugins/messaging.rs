@@ -8,7 +8,7 @@ use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
-use crate::plugins::network::{ClientConnection, CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
+use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
 type DispatchMessage = Box<dyn Any>;
