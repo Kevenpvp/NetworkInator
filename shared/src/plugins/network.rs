@@ -13,7 +13,7 @@ use crate::plugins::messaging::{MessageInfos, MessageTrait};
 
 pub struct NetworkPlugin;
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub enum PortReliability{
     Reliable,
     Unreliable
@@ -26,6 +26,9 @@ pub enum NetworkType{
     LocalServer
 }
 
+#[derive(Resource,Default)]
+pub struct LocalSeasonUUID(pub(crate) Option<Uuid>);
+
 #[cfg(target_arch = "wasm32")]
 pub trait ServerPortTrait{
     fn start(&mut self, network_port_shared_infos: &dyn Any);
@@ -37,9 +40,11 @@ pub trait ServerPortTrait{
     fn as_main_port(&mut self) -> bool;
     fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>);
     fn is_main_port(&self) -> bool;
+    fn get_anonymous_seasons(&self) -> Vec<Uuid>;
+    fn get_authenticated_seasons(&self) -> Vec<(Uuid,Uuid)>;
 
-    fn deserialize_message_infos(&self, vec: Vec<u8>) -> MessageInfos {
-        from_bytes::<MessageInfos>(&vec).unwrap()
+    fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
+        from_bytes::<MessageInfos>(&vec).ok()
     }
 
     fn get_port_infos(&mut self) -> Option<&dyn Any> {
@@ -66,6 +71,10 @@ pub trait ServerPortTrait{
         true
     }
 
+    fn get_peer_uuid_from_season(&self, _season_uuid: &Uuid) -> Option<&Uuid> {
+        None
+    }
+
     fn is_port_authenticate_able(&self) -> bool {
         true
     }
@@ -79,6 +88,14 @@ pub trait ServerPortTrait{
     }
 
     fn disconnect_peer_or_season(&mut self, _uuid: &Uuid) {
+
+    }
+
+    fn ping(&mut self, _season_uuid: &Uuid, _network_port_shared_infos: &dyn Any) {
+
+    }
+
+    fn pong(&mut self, _season_uuid: &Uuid, _bytes: &[u8], _network_port_shared_infos: Option<&dyn Any>) {
 
     }
 }
@@ -94,9 +111,11 @@ pub trait ServerPortTrait: Send + Sync{
     fn as_main_port(&mut self) -> bool;
     fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>);
     fn is_main_port(&self) -> bool;
+    fn get_anonymous_seasons(&self) -> Vec<Uuid>;
+    fn get_authenticated_seasons(&self) -> Vec<(Uuid,Uuid)>;
 
-    fn deserialize_message_infos(&self, vec: Vec<u8>) -> MessageInfos {
-        from_bytes::<MessageInfos>(&vec).unwrap()
+    fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
+        from_bytes::<MessageInfos>(&vec).ok()
     }
 
     fn get_port_infos(&mut self) -> Option<&dyn Any> {
@@ -123,6 +142,10 @@ pub trait ServerPortTrait: Send + Sync{
         true
     }
 
+    fn get_peer_uuid_from_season(&self, _season_uuid: &Uuid) -> Option<&Uuid> {
+        None
+    }
+
     fn is_port_authenticate_able(&self) -> bool {
         true
     }
@@ -138,6 +161,14 @@ pub trait ServerPortTrait: Send + Sync{
     fn disconnect_peer_or_season(&mut self, _uuid: &Uuid) {
 
     }
+
+    fn ping(&mut self, _season_uuid: &Uuid, _network_port_shared_infos: &dyn Any) {
+
+    }
+
+    fn pong(&mut self, _season_uuid: &Uuid, _bytes: &[u8], _network_port_shared_infos: Option<&dyn Any>) {
+
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -149,11 +180,11 @@ pub trait ClientPortTrait {
     fn get_server_messages(&mut self) -> Vec<Vec<u8>>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>);
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_season_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>);
     fn is_main_port(&self) -> bool;
 
-    fn deserialize_message_infos(&self, vec: Vec<u8>) -> MessageInfos {
-        from_bytes::<MessageInfos>(&vec).unwrap()
+    fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
+        from_bytes::<MessageInfos>(&vec).ok()
     }
 
     fn get_port_infos(&mut self) -> Option<&dyn Any> {
@@ -174,6 +205,14 @@ pub trait ClientPortTrait {
 
     fn is_port_authenticate_able(&self) -> bool {
         true
+    }
+
+    fn ping(&mut self, _local_season_uuid: Uuid, _network_port_shared_infos: &dyn Any) {
+
+    }
+
+    fn pong(&mut self, _bytes: &[u8], _network_port_shared_infos: Option<&dyn Any>) {
+
     }
 }
 
@@ -186,11 +225,11 @@ pub trait ClientPortTrait: Send + Sync{
     fn get_server_messages(&mut self) -> Vec<Vec<u8>>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>);
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_season_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>);
     fn is_main_port(&self) -> bool;
 
-    fn deserialize_message_infos(&self, vec: Vec<u8>) -> MessageInfos {
-        from_bytes::<MessageInfos>(&vec).unwrap()
+    fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
+        from_bytes::<MessageInfos>(&vec).ok()
     }
 
     fn get_port_infos(&mut self) -> Option<&dyn Any> {
@@ -211,6 +250,14 @@ pub trait ClientPortTrait: Send + Sync{
 
     fn is_port_authenticate_able(&self) -> bool {
         true
+    }
+
+    fn ping(&mut self, _local_season_uuid: Uuid, _network_port_shared_infos: &dyn Any) {
+
+    }
+
+    fn pong(&mut self, _bytes: &[u8], _network_port_shared_infos: Option<&dyn Any>) {
+
     }
 }
 
@@ -407,8 +454,20 @@ impl ServerConnection {
         }
     }
 
+    pub fn get_immutable_port(&self, port_id: u32) -> Option<&dyn ServerPortTrait> {
+        if port_id == 0 {
+            self.main_port.as_deref()
+        }else {
+            self.secondary_ports.get(&port_id).map(|v| &**v)
+        }
+    }
+
     pub fn get_secondary_ports(&mut self) -> &mut HashMap<u32, Box<dyn ServerPortTrait>> {
         &mut self.secondary_ports
+    }
+
+    pub fn get_immutable_secondary_ports(&self) -> &HashMap<u32, Box<dyn ServerPortTrait>> {
+        &self.secondary_ports
     }
 
     pub fn get_max_connections(&self) -> u32{
@@ -503,8 +562,20 @@ impl ClientConnection {
         }
     }
 
+    pub fn get_immutable_port(&self, port_id: u32) -> Option<&dyn ClientPortTrait> {
+        if port_id == 0 {
+            self.main_port.as_deref()
+        }else {
+            self.secondary_ports.get(&port_id).map(|v| &**v)
+        }
+    }
+
     pub fn get_secondary_ports(&mut self) -> &mut HashMap<u32, Box<dyn ClientPortTrait>> {
         &mut self.secondary_ports
+    }
+
+    pub fn get_immutable_secondary_ports(&self) -> &HashMap<u32, Box<dyn ClientPortTrait>> {
+        &self.secondary_ports
     }
 
     pub fn get_ports_amount(&self) -> u32 {
@@ -595,9 +666,9 @@ impl NetworkConnection<ClientConnection> {
         }
     }
 
-    pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>) {
+    pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_season_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>) {
         if let Some(client_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = client_connection.get_port_split(port_id) {
-            port.send_message_for_server(message_id, network_port_shared_infos, message, send_args);
+            port.send_message_for_server(message_id, network_port_shared_infos, message, local_season_uuid, send_args);
         }
     }
 
@@ -626,5 +697,11 @@ impl CurrentNetworkSides {
 
     pub fn insert_side(&mut self, side: NetworkType){
         self.0.push(side);
+    }
+}
+
+impl LocalSeasonUUID {
+    pub fn get_season_uuid(&self) -> Option<Uuid> {
+        self.0
     }
 }

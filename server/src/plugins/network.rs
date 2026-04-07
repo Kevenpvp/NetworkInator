@@ -66,7 +66,7 @@ impl Plugin for ServerNetworkPlugin {
         app.add_message::<AnonymousPeersAcceptedOnPort>();
         app.add_message::<PeersDroppedServer>();
 
-        app.add_systems(First,(start_ports,check_peers_connected,listen_peers,check_peers_disconnected,check_port_disconnected).chain());
+        app.add_systems(First,(start_ports,check_peers_connected,listen_peers,check_peers_disconnected,check_port_disconnected,ping_ports).chain());
     }
 }
 
@@ -239,6 +239,32 @@ pub fn check_port_disconnected(
                         error,
                         was_connected
                     });
+                }
+            }
+        }
+    }
+}
+
+pub fn ping_ports(
+    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
+){
+    for server_connection in &mut network_connection.0.values_mut() {
+        if let (Some(main_port), network_port_shared_infos) = server_connection.get_port_split(0)
+            && let Some(network_port_shared_infos) = network_port_shared_infos {
+
+            for (season_uuid,_) in main_port.get_authenticated_seasons() {
+                main_port.ping(&season_uuid, network_port_shared_infos);
+            }
+        }
+
+        let ports_amount = server_connection.get_ports_amount();
+
+        for _port_id in 1..=ports_amount {
+            if let (Some(port), network_port_shared_infos) = server_connection.get_port_split(_port_id)
+                && let Some(network_port_shared_infos) = network_port_shared_infos {
+
+                for (season_uuid,_) in port.get_authenticated_seasons() {
+                    port.ping(&season_uuid, network_port_shared_infos);
                 }
             }
         }

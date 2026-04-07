@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use message_pro_macro::ConnectionMessage;
 use server::plugins::network::ServerNetworkPlugin;
 use server::ports::tcp::TcpServerSettings;
+use server::ports::udp::UdpServerSettings;
 use shared::NetResMut;
 use shared::plugins::authentication::AuthenticationPlugin;
 use shared::plugins::messaging::MessagingPlugin;
@@ -18,7 +19,7 @@ fn start_connection(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
 ) {
     network_connection.start_connection::<DefaultNetworkPortSharedInfosServer>(0, 0, Box::new(TcpServerSettings::default()),true);
-    network_connection.open_secondary_port(0, Box::new(TcpServerSettings::default().with_port(8070)));
+    network_connection.open_secondary_port(0, Box::new(UdpServerSettings::default().with_port(8070)));
 }
 
 fn read_hi_message(

@@ -104,11 +104,11 @@ impl<'w> ServerConnectionParams<'w> {
 }
 
 impl<'w> ClientConnectionParams<'w> {
-    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>){
+    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_season_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>){
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
-            self.connection.send_message_to_server(*message_id, connection_id, port_id, message, send_args);
+            self.connection.send_message_to_server(*message_id, connection_id, port_id, message, local_season_uuid, send_args);
         }
     }
 
@@ -256,9 +256,9 @@ fn check_messages_from_client(
         if let Some(main_port) = connection.get_port(0){
             for (season_uuid, (messages, peer_uuid)) in main_port.get_peers_messages() {
                 for bytes in messages {
-                    let message_infos = main_port.deserialize_message_infos(bytes);
+                    main_port.pong(&season_uuid, &bytes, None);
 
-                    if let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
+                    if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
                         let message = (registry.deserialize)(&message_infos.message);
                         let dispatch = registry.dispatch_message;
                         let connection_id = *connection_id;
@@ -268,16 +268,15 @@ fn check_messages_from_client(
                         })
                     }
                 }
-
             }
         }
 
         for (port_id,port) in connection.get_secondary_ports().iter_mut() {
             for (season_uuid, (messages, peer_uuid)) in port.get_peers_messages() {
                 for bytes in messages {
-                    let message_infos = port.deserialize_message_infos(bytes);
+                    port.pong(&season_uuid, &bytes, None);
 
-                    if let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
+                    if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
                         let message = (registry.deserialize)(&message_infos.message);
                         let dispatch = registry.dispatch_message;
                         let connection_id = *connection_id;
@@ -301,9 +300,9 @@ fn check_messages_from_server(
     for (connection_id,connection) in network_connection.0.iter_mut(){
         if let Some(main_port) = connection.get_port(0){
             for bytes in main_port.get_server_messages() {
-                let message_infos = main_port.deserialize_message_infos(bytes);
+                main_port.pong(&bytes, None);
 
-                if let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
+                if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
                     let message = (registry.deserialize)(&message_infos.message);
                     let dispatch = registry.dispatch_message;
                     let connection_id = *connection_id;
@@ -317,9 +316,9 @@ fn check_messages_from_server(
 
         for (port_id,port) in connection.get_secondary_ports().iter_mut() {
             for bytes in port.get_server_messages() {
-                let message_infos = port.deserialize_message_infos(bytes);
+                port.pong(&bytes, None);
 
-                if let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
+                if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
                     let message = (registry.deserialize)(&message_infos.message);
                     let dispatch = registry.dispatch_message;
                     let connection_id = *connection_id;

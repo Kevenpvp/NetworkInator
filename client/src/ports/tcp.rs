@@ -2,6 +2,7 @@ use std::any::Any;
 use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+use bevy::asset::uuid::Uuid;
 use bevy::log::warn;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -18,6 +19,7 @@ pub struct TcpClientSettings{
     bytes: BytesOptions,
     order: OrderOptions,
     hook_stream: Option<fn(tcp_stream: TcpStream) -> TcpStream>,
+    buffer_size: usize,
 }
 
 pub struct TcpClientPort{
@@ -47,6 +49,30 @@ impl TcpClientSettings {
         
         self
     }
+
+    pub fn with_bytes_options(mut self, bytes_options: BytesOptions) -> Self {
+        self.bytes = bytes_options;
+
+        self
+    }
+
+    pub fn with_order_options(mut self, order_options: OrderOptions) -> Self {
+        self.order = order_options;
+
+        self
+    }
+
+    pub fn with_hook_stream(mut self, hook_stream: fn(tcp_stream: TcpStream) -> TcpStream) -> Self {
+        self.hook_stream = Some(hook_stream);
+
+        self
+    }
+
+    pub fn with_buffer_size(mut self, buffer_size: usize) -> Self {
+        self.buffer_size = buffer_size;
+
+        self
+    }
 }
 
 impl Default for TcpClientSettings{
@@ -56,7 +82,8 @@ impl Default for TcpClientSettings{
             port: 8080,
             bytes: BytesOptions::U32,
             order: OrderOptions::LittleEndian,
-            hook_stream: None
+            hook_stream: None,
+            buffer_size: 1024
         }
     }
 }
@@ -198,7 +225,7 @@ impl ClientPortTrait for TcpClientPort{
         true
     }
 
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<Box<dyn Any>>) {
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _local_season_uuid: Option<Uuid>, _send_args: Option<Box<dyn Any>>) {
         if let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosClient>()
         && let Some(runtime) = &default_network_port_shared_infos.get_runtime()
         && let Some(owned_write_half) = &self.owned_write_half
@@ -245,7 +272,8 @@ impl ClientPortTrait for TcpClientPort{
 
     fn listen_to_server(&mut self, _network_port_shared_infos: &dyn Any) {
         if let Some(owned_read_half) = &self.owned_read_half {
-            let mut temp_buf = [0u8; 1024];
+            let buffer_size = &self.settings.buffer_size;
+            let mut temp_buf = vec![0u8; *buffer_size];
 
             match owned_read_half.try_read(&mut temp_buf) {
                 Ok(n) => {

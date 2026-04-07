@@ -7,7 +7,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
 use std::io::{Error, ErrorKind};
 use std::sync::{Arc};
-use std::time::{Instant};
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -20,6 +20,7 @@ pub struct TcpServerSettings{
     port: u16,
     bytes: BytesOptions,
     order: OrderOptions,
+    buffer_size: usize,
     hook_stream: Option<fn(tcp_stream: TcpStream) -> TcpStream>,
 }
 
@@ -31,7 +32,7 @@ pub struct PeerConnected{
     owned_write_half: Arc<Mutex<OwnedWriteHalf>>,
     socket_addr: SocketAddr,
     internal_buffer: Vec<u8>,
-    non_authenticated_time: f32
+    non_authenticated_instant: Instant
 }
 
 pub struct TcpServerPort{
@@ -65,6 +66,30 @@ impl TcpServerSettings {
 
         self
     }
+
+    pub fn with_bytes_options(mut self, bytes_options: BytesOptions) -> Self {
+        self.bytes = bytes_options;
+
+        self
+    }
+
+    pub fn with_order_options(mut self, order_options: OrderOptions) -> Self {
+        self.order = order_options;
+
+        self
+    }
+
+    pub fn with_hook_stream(mut self, hook_stream: fn(tcp_stream: TcpStream) -> TcpStream) -> Self {
+        self.hook_stream = Some(hook_stream);
+
+        self
+    }
+
+    pub fn with_buffer_size(mut self, buffer_size: usize) -> Self {
+        self.buffer_size = buffer_size;
+
+        self
+    }
 }
 
 impl Default for TcpServerSettings {
@@ -75,6 +100,7 @@ impl Default for TcpServerSettings {
             bytes: BytesOptions::U32,
             order: OrderOptions::LittleEndian,
             hook_stream: None,
+            buffer_size: 1024,
         }
     }
 }
@@ -162,8 +188,6 @@ impl ServerPortTrait for TcpServerPort{
                         }
 
                         Err(e) => {
-                            println!("failed to connect {}", e);
-
                             if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
                                 warn!("Failed to send TCP port failed to connect, error: {}", send_error);
                             }
@@ -338,6 +362,30 @@ impl ServerPortTrait for TcpServerPort{
         self.main_port
     }
 
+    fn get_anonymous_seasons(&self) -> Vec<Uuid> {
+        let mut annoy_anonymous_seasons = Vec::new();
+
+        for (season_uuid,peer_connected) in self.peers_connected.iter() {
+            if peer_connected.peer_id.is_none(){
+                annoy_anonymous_seasons.push(*season_uuid);
+            }
+        }
+
+        annoy_anonymous_seasons
+    }
+
+    fn get_authenticated_seasons(&self) -> Vec<(Uuid,Uuid)> {
+        let mut annoy_anonymous_seasons = Vec::new();
+
+        for (season_uuid,peer_connected) in self.peers_connected.iter() {
+            if let Some(peer_id) = peer_connected.peer_id {
+                annoy_anonymous_seasons.push((*season_uuid,peer_id));
+            }
+        }
+
+        annoy_anonymous_seasons
+    }
+
     fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error)> {
         let mut peers: HashMap<Uuid,(Option<Uuid>, Error)> = HashMap::new();
 
@@ -353,12 +401,12 @@ impl ServerPortTrait for TcpServerPort{
             peers.insert(season_uuid, (peer_id, error));
         }
 
-        let now = Instant::now().elapsed().as_millis_f32();
+        let now = Instant::now();
 
         self.peers_connected.retain(|season_uuid, peer_connected| {
             if peer_connected.peer_id.is_some() { return true }
 
-            if now - peer_connected.non_authenticated_time >= 120.0 {
+            if now.duration_since(peer_connected.non_authenticated_instant) >= Duration::from_secs(120) {
                 peers.insert(*season_uuid, (peer_connected.peer_id, Error::new(ErrorKind::TimedOut, "Didnt authenticated in time")));
                 return false
             };
@@ -395,18 +443,20 @@ impl ServerPortTrait for TcpServerPort{
                 owned_write_half: Arc::new(Mutex::from(owned_write_half)),
                 socket_addr,
                 internal_buffer: Vec::new(),
-                non_authenticated_time: Instant::now().elapsed().as_millis_f32()
+                non_authenticated_instant: Instant::now()
             });
 
             peers.push(season_uuid);
         }
-        
+
         peers
     }
 
     fn listen_peers(&mut self, _network_port_shared_infos: &dyn Any) {
+        let buffer_size = self.settings.buffer_size;
+
         for (season_uuid, peer_connected) in self.peers_connected.iter_mut() {
-            let mut temp_buf = [0u8; 1024];
+            let mut temp_buf = vec![0u8; buffer_size];
 
             match peer_connected.owned_read_half.try_read(&mut temp_buf) {
                 Ok(n) => {
@@ -448,6 +498,10 @@ impl ServerPortTrait for TcpServerPort{
         }
 
         false
+    }
+
+    fn get_peer_uuid_from_season(&self, season_uuid: &Uuid) -> Option<&Uuid> {
+        self.peers_authenticated.get(season_uuid)
     }
 
     fn is_peer_connected(&self, peer_uuid: &Uuid) -> bool {
