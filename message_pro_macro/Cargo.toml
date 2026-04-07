@@ -3,7 +3,7 @@ name = "message_pro_macro"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-publish = true
+publish = false
 
 description = "Macros for NetworkInator"
 license.workspace = true

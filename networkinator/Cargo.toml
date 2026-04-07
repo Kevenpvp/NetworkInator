@@ -4,10 +4,15 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+description = "Crate for network on bevy"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
 [dependencies]
 bevy = { workspace = true, features = ["dynamic_linking"] }
 tokio = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 erased-serde = { workspace = true }
-message_pro_macro = { path = "../message_pro_macro" }
+message_pro_macro = "0.1.0"
