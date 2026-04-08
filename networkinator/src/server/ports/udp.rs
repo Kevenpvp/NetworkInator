@@ -24,7 +24,8 @@ pub struct PeerConnected{
     socket_addr: SocketAddr,
     non_authenticated_instant: Instant,
     last_pong_instant: Instant,
-    last_ping_instant: Instant
+    last_ping_instant: Instant,
+    is_local: bool
 }
 
 pub struct UdpServerPort {
@@ -254,7 +255,8 @@ impl ServerPortTrait for UdpServerPort {
                     socket_addr: socket,
                     non_authenticated_instant: now,
                     last_pong_instant: now,
-                    last_ping_instant: now
+                    last_ping_instant: now,
+                    is_local: false
                 });
 
                 messages_list.insert(session_uuid, (Vec::from([buff]), None));
@@ -348,12 +350,14 @@ impl ServerPortTrait for UdpServerPort {
         HashMap::new()
     }
 
-    fn authenticate_peer(&mut self, current_session_uuid: Uuid, new_peer_id: Uuid, new_session_uuid: Option<Uuid>) {
+    fn authenticate_peer(&mut self, current_session_uuid: Uuid, new_peer_id: Uuid, new_session_uuid: Option<Uuid>, is_local: bool) {
         if let Some(peer_connected) = self.peers_connected.get_mut(&current_session_uuid) {
             peer_connected.peer_id = Some(new_peer_id);
 
             if let Some(new_session_uuid) = new_session_uuid {
-                let peer_connected = self.peers_connected.remove(&current_session_uuid).unwrap();
+                let mut peer_connected = self.peers_connected.remove(&current_session_uuid).unwrap();
+                
+                peer_connected.is_local = is_local;
 
                 self.peers_connected.insert(new_session_uuid, peer_connected);
                 self.peer_uuid_to_session_uuid.insert(new_peer_id, new_session_uuid);

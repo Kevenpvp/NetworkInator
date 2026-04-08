@@ -58,7 +58,10 @@ pub fn start_ports(
     server_network_connection: Option<NetRes<NetworkConnection<ServerConnection>>>,
 ){
     for (connection_id,client_connection) in &mut network_connection.0 {
-        if let Some(server_network_connection) = server_network_connection.as_ref() && server_network_connection.0.contains_key(connection_id) {
+        if client_connection.is_local_connection() {
+            continue;
+        } else if let Some(server_network_connection) = server_network_connection.as_ref() && server_network_connection.0.contains_key(connection_id) {
+            client_connection.set_as_local_connection();
             continue;
         }
 

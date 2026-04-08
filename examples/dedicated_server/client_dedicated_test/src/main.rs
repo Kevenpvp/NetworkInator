@@ -26,7 +26,7 @@ fn send_hi_message(
     local_session_uuid: NetRes<LocalSessionUUID>,
 ){
     for event in client_port_authenticated.read() {
-        client_connection_params.send_message::<HiMessage>(event.connection_id, event.port_id, &HiMessage("Hi server".parse().unwrap()), local_session_uuid.get_session_uuid(), None);
+        client_connection_params.send_message::<HiMessage>(event.connection_id, event.port_id, HiMessage("Hi server".parse().unwrap()), local_session_uuid.get_session_uuid(), None);
     }
 }
 

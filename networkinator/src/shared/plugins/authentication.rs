@@ -2,11 +2,11 @@ use crate::shared::plugins::messaging::{ClientConnectionParams, MessageReceivedF
 use std::collections::HashMap;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
-use bevy::prelude::{IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin, PreUpdate, Resource, Update};
+use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin, PreUpdate, Resource, Update};
 use serde::{Deserialize, Serialize};
 use message_pro_macro::ConnectionMessage;
 use crate::{NetRes, NetResMut};
-use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSessionUUID, NetworkConnection, NetworkType, ServerConnection};
+use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalPeerUUID, LocalSessionUUID, NetworkConnection, NetworkType, ServerConnection};
 
 pub struct AuthenticationPlugin;
 
@@ -24,9 +24,6 @@ struct AuthenticatedFromServer{
     session_uuid: Uuid,
     peer_uuid: Uuid
 }
-
-#[derive(Resource,Default)]
-pub struct LocalPeerUUID(Option<Uuid>);
 
 #[derive(Message)]
 pub struct ClientPortAuthenticated{
@@ -55,14 +52,12 @@ impl Plugin for AuthenticationPlugin{
             app.add_systems(PreUpdate,(check_peer_authenticated,authenticate_unreliable_ports,check_authenticated_peers_are_connected).chain());
             
             if is_local_server {
-                app.add_systems(Update,authenticate_local_peer);
+                app.add_systems(First,authenticate_local_peer);
             }
         }
 
         if is_client {
             app.add_message::<ClientPortAuthenticated>();
-            app.init_resource::<LocalPeerUUID>();
-            app.init_resource::<LocalSessionUUID>();
             app.add_systems(Update,(authenticate_port,check_port_authenticated).chain());
         }
     }
@@ -74,6 +69,7 @@ fn authenticate_local_peer(
     mut authenticated_sessions: NetResMut<AuthenticatedSessions>,
     mut server_network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     mut client_network_connection: NetResMut<NetworkConnection<ClientConnection>>,
+    mut client_port_authenticated: MessageWriter<ClientPortAuthenticated>,
 ){
     if local_peer_uuid.0.is_none() {
         let new_peer_uuid = Uuid::new_v4();
@@ -84,8 +80,6 @@ fn authenticate_local_peer(
 
         authenticated_sessions.0.insert(new_session_uuid,new_peer_uuid);
         authenticated_sessions.0.insert(new_peer_uuid, new_session_uuid);
-        
-        println!("Local peer authenticated");
     }
     
     let session_uuid = local_session_uuid.0.unwrap();
@@ -93,21 +87,26 @@ fn authenticate_local_peer(
     
     for (_,connection) in server_network_connection.0.iter_mut(){
         if let Some(main_port) = connection.get_port(0) && !main_port.is_session_authenticated(&session_uuid) {
-            main_port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid));
+            main_port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid), true);
         }
 
         let ports_amount = connection.get_ports_amount();
 
         for port_id in 1..=ports_amount {
             if let Some(port) = connection.get_port(port_id) && !port.is_session_authenticated(&session_uuid){
-                port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid));
+                port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid), true);
             }
         }
     }
 
-    for (_,connection) in client_network_connection.0.iter_mut(){
+    for (connection_id,connection) in client_network_connection.0.iter_mut(){
         if let Some(main_port) = connection.get_port(0) && !main_port.is_port_authenticated(){
             main_port.authenticate_port();
+
+            client_port_authenticated.write(ClientPortAuthenticated{
+                port_id: 0,
+                connection_id: *connection_id,
+            });
         }
 
         let ports_amount = connection.get_ports_amount();
@@ -115,6 +114,11 @@ fn authenticate_local_peer(
         for port_id in 1..=ports_amount {
             if let Some(port) = connection.get_port(port_id) && !port.is_port_authenticated(){
                 port.authenticate_port();
+
+                client_port_authenticated.write(ClientPortAuthenticated{
+                    port_id: 0,
+                    connection_id: *connection_id,
+                });
             }
         }
     }
@@ -123,6 +127,7 @@ fn authenticate_local_peer(
 fn authenticate_unreliable_ports(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     authenticated_sessions: NetRes<AuthenticatedSessions>,
+    local_session_uuid: NetRes<LocalSessionUUID>,
 ){
     let mut peers_to_authenticate: HashMap<u32, HashMap<u32, Vec<(Uuid,Uuid)>>> = HashMap::new();
 
@@ -159,7 +164,7 @@ fn authenticate_unreliable_ports(
             for (port_id,authenticate_list) in port_authenticate_list.iter() {
                 if let Some(port) = connection.get_port(*port_id) {
                     for (session_uuid,peer_id) in authenticate_list {
-                        port.authenticate_peer(*session_uuid, *peer_id, Some(*authenticated_sessions.1.get(session_uuid).unwrap()));
+                        port.authenticate_peer(*session_uuid, *peer_id, Some(*authenticated_sessions.1.get(session_uuid).unwrap()), if let Some(local_session_uuid) = &local_session_uuid.0 && local_session_uuid == session_uuid {true}else{false});
                     }
                 }
             }
@@ -184,21 +189,21 @@ fn check_peer_authenticated(
 
                 if let Some(session_uuid) = auth_message.session_uuid {
                     if let Some(current_peer_uuid) = authenticated_sessions.0.get(&session_uuid) && !port.is_session_authenticated(&session_uuid) {
-                        port.authenticate_peer(message.session_uuid, *current_peer_uuid, Some(session_uuid));
-
-                        server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, &AuthenticatedFromServer{
+                        port.authenticate_peer(message.session_uuid, *current_peer_uuid, Some(session_uuid), false);
+                        
+                        server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                             session_uuid,
                             peer_uuid: *current_peer_uuid,
-                        }, *current_peer_uuid, None);
+                        },*current_peer_uuid, None);
                     }
                 }else if is_authentication_connection && port.is_main_port() && !port.is_session_authenticated(&message.session_uuid) {
                     let peer_uuid = Uuid::new_v4();
 
-                    port.authenticate_peer(message.session_uuid, peer_uuid, None);
+                    port.authenticate_peer(message.session_uuid, peer_uuid, None, false);
                     authenticated_sessions.0.insert(message.session_uuid, peer_uuid);
                     authenticated_sessions.0.insert(peer_uuid, message.session_uuid);
 
-                    server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, &AuthenticatedFromServer{
+                    server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                         session_uuid: message.session_uuid,
                         peer_uuid,
                     }, peer_uuid, None);
@@ -215,7 +220,7 @@ fn check_peer_authenticated(
         && let Some(current_peer_uuid) = authenticated_sessions.0.get(&session_uuid)
 
         {
-            server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, &AuthenticatedFromServer{
+            server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                 session_uuid,
                 peer_uuid: *current_peer_uuid,
             }, *current_peer_uuid, None);
@@ -320,7 +325,7 @@ fn authenticate_port(
 
     for (connection_id,ports) in pending.into_iter() {
         for port_id in ports.iter() {
-            client_connections_params.send_message::<AuthenticationMessage>(connection_id, *port_id, &AuthenticationMessage{
+            client_connections_params.send_message::<AuthenticationMessage>(connection_id, *port_id, AuthenticationMessage{
                 session_uuid: local_session_uuid.0,
             }, local_session_uuid.0, None);
         }

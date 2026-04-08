@@ -8,7 +8,7 @@ use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
-use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
+use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
 type DispatchMessage = Box<dyn Any>;
@@ -54,15 +54,19 @@ pub struct MessagesRegistryClient(u32, HashMap<u32, MessageFunctionsClient>, Has
 pub struct MessagesRegistryServer(u32, HashMap<u32, MessageFunctionsServer>, HashMap<TypeId, u32>);
 
 #[derive(SystemParam)]
-pub struct ServerConnectionParams<'w> {
+pub struct ServerConnectionParams<'w, 's> {
     messages_registry: NetRes<'w, MessagesRegistryServer>,
-    connection: ResMut<'w, NetworkConnection<ServerConnection>>
+    connection: NetResMut<'w, NetworkConnection<ServerConnection>>,
+    local_peer_uuid: NetRes<'w, LocalPeerUUID>,
+    commands: Commands<'w, 's>
 }
 
 #[derive(SystemParam)]
-pub struct ClientConnectionParams<'w> {
+pub struct ClientConnectionParams<'w, 's> {
     messages_registry: NetRes<'w, MessagesRegistryClient>,
-    connection: ResMut<'w, NetworkConnection<ClientConnection>>
+    connection: NetResMut<'w, NetworkConnection<ClientConnection>>,
+    local_peer_uuid: NetRes<'w, LocalPeerUUID>,
+    commands: Commands<'w, 's>
 }
 
 #[derive(Message)]
@@ -89,12 +93,25 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
     pub connection_id: u32
 }
 
-impl<'w> ServerConnectionParams<'w> {
-    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: &dyn MessageTrait, peer_id: Uuid, send_args: Option<Box<dyn Any>>){
+impl<'w, 's> ServerConnectionParams<'w, 's> {
+    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<Box<dyn Any>>){
+        if let Some(local_peer_uuid) = &self.local_peer_uuid.0
+        && local_peer_uuid == &peer_id
+        {
+            self.commands.queue(move |world: &mut World| {
+                world.write_message(MessageReceivedFromServer{
+                    message,
+                    port_id,
+                    connection_id,
+                });
+            });
+            return;
+        }
+
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
-            self.connection.send_message(*message_id, connection_id, port_id, message, peer_id, send_args);
+            self.connection.send_message(*message_id, connection_id, port_id, &message, peer_id, send_args);
         }
     }
 
@@ -103,12 +120,23 @@ impl<'w> ServerConnectionParams<'w> {
     }
 }
 
-impl<'w> ClientConnectionParams<'w> {
-    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>){
+impl<'w, 's> ClientConnectionParams<'w, 's> {
+    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>){
         let type_id = TypeId::of::<T>();
 
-        if let Some(message_id) = self.messages_registry.2.get(&type_id) {
-            self.connection.send_message_to_server(*message_id, connection_id, port_id, message, local_session_uuid, send_args);
+        if let Some(message_id) = self.messages_registry.2.get(&type_id)
+            && self.connection.send_message_to_server(*message_id, connection_id, port_id, &message, local_session_uuid, send_args)
+            && let Some(local_peer_uuid) = self.local_peer_uuid.0 && let Some(local_session_uuid) = local_session_uuid {
+
+            self.commands.queue(move |world: &mut World| {
+                world.write_message(MessageReceivedFromPeer{
+                    message,
+                    peer_uuid: local_peer_uuid,
+                    session_uuid: local_session_uuid,
+                    port_id,
+                    connection_id,
+                });
+            });
         }
     }
 

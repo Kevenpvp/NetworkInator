@@ -32,7 +32,8 @@ pub struct PeerConnected{
     owned_write_half: Arc<Mutex<OwnedWriteHalf>>,
     socket_addr: SocketAddr,
     internal_buffer: Vec<u8>,
-    non_authenticated_instant: Instant
+    non_authenticated_instant: Instant,
+    is_local: bool,
 }
 
 pub struct TcpServerPort{
@@ -443,7 +444,8 @@ impl ServerPortTrait for TcpServerPort{
                 owned_write_half: Arc::new(Mutex::from(owned_write_half)),
                 socket_addr,
                 internal_buffer: Vec::new(),
-                non_authenticated_instant: Instant::now()
+                non_authenticated_instant: Instant::now(),
+                is_local: false
             });
 
             peers.push(session_uuid);
@@ -475,14 +477,16 @@ impl ServerPortTrait for TcpServerPort{
         }
     }
 
-    fn authenticate_peer(&mut self, current_session_uuid: Uuid, new_peer_id: Uuid, new_session_uuid: Option<Uuid>) {
+    fn authenticate_peer(&mut self, current_session_uuid: Uuid, new_peer_id: Uuid, new_session_uuid: Option<Uuid>, is_local: bool) {
         if let Some(peer_connected) = self.peers_connected.get_mut(&current_session_uuid) {
             peer_connected.peer_id = Some(new_peer_id);
             
             println!("Peer authenticated");
             
             if let Some(new_session_uuid) = new_session_uuid{
-                let peer_connected = self.peers_connected.remove(&current_session_uuid).unwrap();
+                let mut peer_connected = self.peers_connected.remove(&current_session_uuid).unwrap();
+
+                peer_connected.is_local = is_local;
 
                 self.peers_connected.insert(new_session_uuid,peer_connected);
                 self.peers_authenticated.insert(new_peer_id,new_session_uuid);
@@ -501,7 +505,15 @@ impl ServerPortTrait for TcpServerPort{
     }
 
     fn get_peer_uuid_from_session(&self, session_uuid: &Uuid) -> Option<&Uuid> {
-        self.peers_authenticated.get(session_uuid)
+        if let Some(peer_connected) = self.peers_connected.get(session_uuid) {
+            return peer_connected.peer_id.as_ref()
+        }
+
+        None
+    }
+
+    fn get_session_uuid_from_peer(&self, peer_uuid: &Uuid) -> Option<&Uuid> {
+        self.peers_authenticated.get(peer_uuid)
     }
 
     fn is_peer_connected(&self, peer_uuid: &Uuid) -> bool {

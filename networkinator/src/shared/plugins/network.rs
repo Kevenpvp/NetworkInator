@@ -29,6 +29,9 @@ pub enum NetworkType{
 #[derive(Resource,Default)]
 pub struct LocalSessionUUID(pub(crate) Option<Uuid>);
 
+#[derive(Resource,Default)]
+pub struct LocalPeerUUID(pub(crate) Option<Uuid>);
+
 #[cfg(target_arch = "wasm32")]
 pub trait ServerPortTrait{
     fn start(&mut self, network_port_shared_infos: &dyn Any);
@@ -63,7 +66,7 @@ pub trait ServerPortTrait{
 
     }
 
-    fn authenticate_peer(&mut self, _current_session_uuid: Uuid, _new_peer_id: Uuid, _new_session_uuid: Option<Uuid>) {
+    fn authenticate_peer(&mut self, _current_session_uuid: Uuid, _new_peer_id: Uuid, _new_session_uuid: Option<Uuid>, _is_local: bool) {
 
     }
 
@@ -72,6 +75,9 @@ pub trait ServerPortTrait{
     }
 
     fn get_peer_uuid_from_session(&self, _session_uuid: &Uuid) -> Option<&Uuid> {
+        None
+    }
+    fn get_session_uuid_from_peer(&self, _peer_uuid: &Uuid) -> Option<&Uuid> {
         None
     }
 
@@ -134,7 +140,7 @@ pub trait ServerPortTrait: Send + Sync{
 
     }
 
-    fn authenticate_peer(&mut self, _current_session_uuid: Uuid, _new_peer_id: Uuid, _new_session_uuid: Option<Uuid>) {
+    fn authenticate_peer(&mut self, _current_session_uuid: Uuid, _new_peer_id: Uuid, _new_session_uuid: Option<Uuid>, _is_local: bool) {
 
     }
 
@@ -143,6 +149,9 @@ pub trait ServerPortTrait: Send + Sync{
     }
 
     fn get_peer_uuid_from_session(&self, _session_uuid: &Uuid) -> Option<&Uuid> {
+        None
+    }
+    fn get_session_uuid_from_peer(&self, _peer_uuid: &Uuid) -> Option<&Uuid> {
         None
     }
 
@@ -297,7 +306,8 @@ pub struct ClientConnection{
     main_port: Option<Box<dyn ClientPortTrait>>,
     secondary_ports: HashMap<u32, Box<dyn ClientPortTrait>>,
     network_port_shared_infos: Option<Box<dyn NetworkPortSharedInfos>>,
-    authentication_connection: bool
+    authentication_connection: bool,
+    local_connection: bool
 }
 
 #[derive(Resource,Default)]
@@ -318,6 +328,9 @@ impl Plugin for NetworkPlugin {
                 sides.0.contains(&NetworkType::DedicatedServer)
             )
         };
+
+        app.init_resource::<LocalSessionUUID>();
+        app.init_resource::<LocalPeerUUID>();
 
         if is_client || is_local_server {
             #[cfg(target_arch = "wasm32")]
@@ -513,10 +526,19 @@ impl ClientConnection {
             main_port: Some(port),
             secondary_ports: HashMap::new(),
             network_port_shared_infos: None,
-            authentication_connection
+            authentication_connection,
+            local_connection: false
         };
 
         Some(client_connection)
+    }
+
+    pub fn set_as_local_connection(&mut self) {
+        self.local_connection = true;
+    }
+
+    pub fn is_local_connection(&self) -> bool {
+        self.local_connection
     }
 
     pub fn close_port(&mut self, port_id: u32) {
@@ -666,9 +688,17 @@ impl NetworkConnection<ClientConnection> {
         }
     }
 
-    pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>) {
-        if let Some(client_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = client_connection.get_port_split(port_id) {
-            port.send_message_for_server(message_id, network_port_shared_infos, message, local_session_uuid, send_args);
+    pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>) -> bool {
+        if let Some(client_connection) = self.0.get_mut(&connection_id)  {
+            if client_connection.is_local_connection() {
+                return true
+            }else if let (Some(port),Some(network_port_shared_infos)) = client_connection.get_port_split(port_id) {
+                port.send_message_for_server(message_id, network_port_shared_infos, message, local_session_uuid, send_args);
+               return false
+            }
+            false
+        }else {
+            false
         }
     }
 
