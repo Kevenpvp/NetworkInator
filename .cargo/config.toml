@@ -3,7 +3,8 @@
 linker = "rust-lld.exe"
 rustdocflags = ["-Clinker=rust-lld.exe"]
 rustflags = [
-"-Zshare-generics=off"
+"-Zshare-generics=off",
+    "-Znext-solver=coherence"
 ]
 
 [alias]
