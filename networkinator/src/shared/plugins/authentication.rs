@@ -1,5 +1,6 @@
 use crate::shared::plugins::messaging::{ClientConnectionParams, MessageReceivedFromAnonymousPeer, MessageReceivedFromPeer, MessageReceivedFromServer, MessageTrait, MessageTraitPlugin, ServerConnectionParams};
 use std::collections::HashMap;
+use std::time::Instant;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin, PreUpdate, Resource, Update};
@@ -85,12 +86,14 @@ fn authenticate_local_peer(
     let session_uuid = local_session_uuid.0.unwrap();
     let current_peer_uuid = local_peer_uuid.0.unwrap();
     
-    for (_,connection) in server_network_connection.0.iter_mut(){
+    for connection in server_network_connection.0.values_mut() {
         if let Some(main_port) = connection.get_port(0) && !main_port.is_session_authenticated(&session_uuid) {
             main_port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid), true);
         }
 
         let ports_amount = connection.get_ports_amount();
+
+        connection.peer_authenticated(session_uuid,None,current_peer_uuid,Instant::now());
 
         for port_id in 1..=ports_amount {
             if let Some(port) = connection.get_port(port_id) && !port.is_session_authenticated(&session_uuid){
@@ -189,24 +192,32 @@ fn check_peer_authenticated(
 
                 if let Some(session_uuid) = auth_message.session_uuid {
                     if let Some(current_peer_uuid) = authenticated_sessions.0.get(&session_uuid) && !port.is_session_authenticated(&session_uuid) {
-                        port.authenticate_peer(message.session_uuid, *current_peer_uuid, Some(session_uuid), false);
-                        
+                        if port.is_main_port() {
+                            let copy_session_uuid = session_uuid;
+
+                            port.authenticate_peer(message.session_uuid, *current_peer_uuid, Some(session_uuid), false);
+                            connection.peer_authenticated(message.session_uuid,Some(copy_session_uuid),*current_peer_uuid,Instant::now());
+                        }else {
+                            port.authenticate_peer(message.session_uuid, *current_peer_uuid, Some(session_uuid), false);
+                        }
+
                         server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                             session_uuid,
                             peer_uuid: *current_peer_uuid,
-                        },*current_peer_uuid, None);
+                        }, *current_peer_uuid, &None);
                     }
                 }else if is_authentication_connection && port.is_main_port() && !port.is_session_authenticated(&message.session_uuid) {
                     let peer_uuid = Uuid::new_v4();
 
                     port.authenticate_peer(message.session_uuid, peer_uuid, None, false);
+                    connection.peer_authenticated(message.session_uuid,None,peer_uuid,Instant::now());
                     authenticated_sessions.0.insert(message.session_uuid, peer_uuid);
                     authenticated_sessions.0.insert(peer_uuid, message.session_uuid);
 
                     server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                         session_uuid: message.session_uuid,
                         peer_uuid,
-                    }, peer_uuid, None);
+                    }, peer_uuid, &None);
                 }
             }
         }
@@ -223,7 +234,7 @@ fn check_peer_authenticated(
             server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                 session_uuid,
                 peer_uuid: *current_peer_uuid,
-            }, *current_peer_uuid, None);
+            }, *current_peer_uuid, &None);
         }
     }
 }
@@ -241,7 +252,7 @@ fn check_authenticated_peers_are_connected(
             return true;
         }
         
-        for (_,connection) in network_connection.0.iter_mut() {
+        for connection in network_connection.0.values_mut() {
             if !connection.is_authentication_connection() { continue }
 
             if let Some(main_port) = connection.get_port(0) {

@@ -6,6 +6,7 @@ use tokio::runtime::Runtime;
 use std::io::{Error};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 use bevy::asset::uuid::Uuid;
 use postcard::from_bytes;
 use tokio::sync::Semaphore;
@@ -41,10 +42,15 @@ pub trait ServerPortTrait{
     fn get_peers_messages(&mut self) -> HashMap<Uuid, (Vec<Vec<u8>>,Option<Uuid>)>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>);
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: &Option<Box<dyn Any>>);
     fn is_main_port(&self) -> bool;
     fn get_anonymous_sessions(&self) -> Vec<Uuid>;
     fn get_authenticated_sessions(&self) -> Vec<(Uuid,Uuid)>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
+
+    }
 
     fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
         from_bytes::<MessageInfos>(&vec).ok()
@@ -115,10 +121,15 @@ pub trait ServerPortTrait: Send + Sync{
     fn get_peers_messages(&mut self) -> HashMap<Uuid, (Vec<Vec<u8>>,Option<Uuid>)>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<Box<dyn Any>>);
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: &Option<Box<dyn Any>>);
     fn is_main_port(&self) -> bool;
     fn get_anonymous_sessions(&self) -> Vec<Uuid>;
     fn get_authenticated_sessions(&self) -> Vec<(Uuid,Uuid)>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
+
+    }
 
     fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
         from_bytes::<MessageInfos>(&vec).ok()
@@ -297,6 +308,8 @@ pub struct ServerConnection{
     main_port: Option<Box<dyn ServerPortTrait>>,
     secondary_ports: HashMap<u32, Box<dyn ServerPortTrait>>,
     network_port_shared_infos: Option<Box<dyn NetworkPortSharedInfos>>,
+    pub(crate) peers_connected: HashMap<Uuid, Instant>,
+    pub(crate) peers_authenticated: HashMap<Uuid, Instant>,
     max_connections: u32,
     authentication_connection: bool
 }
@@ -418,7 +431,9 @@ impl ServerConnection {
             secondary_ports: HashMap::new(),
             max_connections,
             network_port_shared_infos: None,
-            authentication_connection
+            peers_connected: Default::default(),
+            authentication_connection,
+            peers_authenticated: Default::default(),
         };
 
         Some(server_connection)
@@ -510,6 +525,23 @@ impl ServerConnection {
         let port = settings.create_port();
 
         self.secondary_ports.insert(ports_amount + 1, port);
+    }
+
+    pub fn peer_authenticated(&mut self, current_session_uuid: Uuid, new_session_uuid: Option<Uuid>, peer_uuid: Uuid, instant: Instant){
+        if let Some(new_session_uuid) = new_session_uuid && let Some(old_instant) = self.peers_connected.remove(&current_session_uuid) {
+            self.peers_connected.insert(new_session_uuid,old_instant);
+        }
+
+        self.peers_authenticated.insert(peer_uuid,instant);
+    }
+
+    pub fn peer_connected(&mut self, uuid: Uuid, instant: Instant){
+        self.peers_connected.insert(uuid,instant);
+    }
+
+    pub fn peer_disconnected(&mut self, uuid: &Uuid){
+        self.peers_connected.remove(uuid);
+        self.peers_authenticated.remove(uuid);
     }
 }
 
@@ -639,9 +671,16 @@ impl NetworkConnection<ServerConnection> {
         }
     }
 
-    pub(crate) fn send_message(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, peer_id: Uuid, send_args: Option<Box<dyn Any>>) {
+    pub(crate) fn send_message(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, peer_uuid: Uuid, send_args: &Option<Box<dyn Any>>) {
         if let Some(server_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
-            port.send_message_to_peer(message_id, peer_id, network_port_shared_infos, message, send_args);
+            port.send_message_to_peer(message_id, peer_uuid, network_port_shared_infos, message, send_args);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: &Option<Box<dyn Any>>, exceptions: &Vec<Uuid>) {
+        if let Some(server_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
+            port.send_message_to_all_peer(message_id,local_peer_uuid,network_port_shared_infos,message,send_args,just_authenticated,exceptions);
         }
     }
 
@@ -662,6 +701,22 @@ impl NetworkConnection<ServerConnection> {
         if let Some(connection) = self.0.get_mut(&connection_id){
             connection.disconnect_peer_or_session(uuid);
         }
+    }
+
+    pub fn get_peers_connected(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,Instant>> {
+        if let Some(connection) = self.0.get_mut(&connection_id){
+            return Some(&connection.peers_connected)
+        }
+
+        None
+    }
+
+    pub fn get_peers_authenticated(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,Instant>> {
+        if let Some(connection) = self.0.get_mut(&connection_id){
+            return  Some(&connection.peers_authenticated)
+        }
+
+        None
     }
 }
 

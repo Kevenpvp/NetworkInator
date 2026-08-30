@@ -94,7 +94,7 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
 }
 
 impl<'w, 's> ServerConnectionParams<'w, 's> {
-    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<Box<dyn Any>>){
+    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: &Option<Box<dyn Any>>){
         if let Some(local_peer_uuid) = &self.local_peer_uuid.0
         && local_peer_uuid == &peer_id
         {
@@ -112,6 +112,28 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
             self.connection.send_message(*message_id, connection_id, port_id, &message, peer_id, send_args);
+        }
+    }
+
+    pub fn send_message_for_all<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, just_authenticated: bool, send_args: &Option<Box<dyn Any>>, exceptions: Vec<Uuid>){
+        let type_id = TypeId::of::<T>();
+
+        if let Some(message_id) = self.messages_registry.2.get(&type_id) {
+            let local_peer_uuid = &self.local_peer_uuid.0;
+
+            self.connection.send_message_to_all_peer(*message_id, connection_id, port_id, &message, local_peer_uuid, just_authenticated, send_args, &exceptions);
+
+            if let Some(local_peer_uuid) = local_peer_uuid
+                && !(exceptions.contains(local_peer_uuid))
+            {
+                self.commands.queue(move |world: &mut World| {
+                    world.write_message(MessageReceivedFromServer {
+                        message,
+                        port_id,
+                        connection_id,
+                    });
+                });
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Error;
+use std::time::Instant;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
 use bevy::log::{error};
@@ -125,6 +126,10 @@ pub fn check_peers_connected(
             let peers_connected = main_port.peers_connected();
             
             if !peers_connected.is_empty() {
+                for peer_uuid in peers_connected.iter() {
+                    server_connection.peer_connected(*peer_uuid,Instant::now());
+                }
+
                 anonymous_peers_accepted_on_port.write(AnonymousPeersAcceptedOnPort{
                     port_id: 0,
                     connection_id: *connection_id,
@@ -182,6 +187,10 @@ pub fn check_peers_disconnected(
             let peers_dropped = main_port.get_peers_disconnected();
 
             if !peers_dropped.is_empty() {
+                for uuid in peers_dropped.keys() {
+                    server_connection.peer_disconnected(uuid)
+                }
+
               peers_dropped_server.write(PeersDroppedServer{
                   port_id: 0,
                   connection_id: *connection_id,

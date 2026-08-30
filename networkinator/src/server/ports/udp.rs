@@ -274,7 +274,7 @@ impl ServerPortTrait for UdpServerPort {
         false
     }
 
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<Box<dyn Any>>) {
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>) {
         if let Some(udp_socket) = &self.udp_socket && let Some(session_uuid) = self.peer_uuid_to_session_uuid.get_mut(&peer_id)
             && let Some(peer_connected) = self.peers_connected.get_mut(session_uuid)
             && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
@@ -328,6 +328,43 @@ impl ServerPortTrait for UdpServerPort {
         }
 
         annoy_anonymous_sessions
+    }
+
+    fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
+        if let Some(udp_socket) = &self.udp_socket && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
+            && let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
+
+            let message_infos = &MessageInfos{
+                message_id,
+                message: postcard::to_stdvec(message).unwrap(),
+            };
+
+            let buffer = match postcard::to_stdvec(message_infos) {
+                Ok(buff) => {buff}
+                Err(_) => {
+                    warn!("Error to serialize message");
+                    return;
+                }
+            };
+
+            for (peer_uuid,peer_connected) in self.peers_connected.iter_mut() {
+                if exceptions.contains(peer_uuid) || (just_authenticated && peer_connected.peer_id.is_none()) {
+                    continue;
+                }
+
+                if let Some(local_peer_uuid) = local_peer_uuid_option && local_peer_uuid == peer_uuid {
+                    continue;
+                }
+
+                let socket_addr = peer_connected.socket_addr;
+                let udp_socket = Arc::clone(udp_socket);
+                let buffer_clone = buffer.clone();
+
+                runtime.spawn(async move {
+                    udp_socket.send_to(&buffer_clone, socket_addr).await.ok()
+                });
+            }
+        }
     }
 
     fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error)> {
