@@ -10,7 +10,7 @@ use std::time::Instant;
 use bevy::asset::uuid::Uuid;
 use postcard::from_bytes;
 use tokio::sync::Semaphore;
-use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
 
 pub struct NetworkPlugin;
 
@@ -42,13 +42,13 @@ pub trait ServerPortTrait{
     fn get_peers_messages(&mut self) -> HashMap<Uuid, (Vec<Vec<u8>>,Option<Uuid>)>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: &Option<Box<dyn Any>>);
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<&SendArgs>);
     fn is_main_port(&self) -> bool;
     fn get_anonymous_sessions(&self) -> Vec<Uuid>;
     fn get_authenticated_sessions(&self) -> Vec<(Uuid,Uuid)>;
 
     #[allow(clippy::too_many_arguments)]
-    fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
+    fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: Option<&SendArgs>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
 
     }
 
@@ -121,13 +121,13 @@ pub trait ServerPortTrait: Send + Sync{
     fn get_peers_messages(&mut self) -> HashMap<Uuid, (Vec<Vec<u8>>,Option<Uuid>)>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: &Option<Box<dyn Any>>);
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, send_args: Option<&SendArgs>);
     fn is_main_port(&self) -> bool;
     fn get_anonymous_sessions(&self) -> Vec<Uuid>;
     fn get_authenticated_sessions(&self) -> Vec<(Uuid,Uuid)>;
 
     #[allow(clippy::too_many_arguments)]
-    fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
+    fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: Option<&SendArgs>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
 
     }
 
@@ -200,7 +200,7 @@ pub trait ClientPortTrait {
     fn get_server_messages(&mut self) -> Vec<Vec<u8>>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>);
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>);
     fn is_main_port(&self) -> bool;
 
     fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
@@ -245,7 +245,7 @@ pub trait ClientPortTrait: Send + Sync{
     fn get_server_messages(&mut self) -> Vec<Vec<u8>>;
     fn get_port_reliability(&mut self) -> &PortReliability;
     fn as_main_port(&mut self) -> bool;
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>);
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>);
     fn is_main_port(&self) -> bool;
 
     fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
@@ -671,14 +671,14 @@ impl NetworkConnection<ServerConnection> {
         }
     }
 
-    pub(crate) fn send_message(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, peer_uuid: Uuid, send_args: &Option<Box<dyn Any>>) {
+    pub(crate) fn send_message(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, peer_uuid: Uuid, send_args: Option<&SendArgs>) {
         if let Some(server_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
             port.send_message_to_peer(message_id, peer_uuid, network_port_shared_infos, message, send_args);
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: &Option<Box<dyn Any>>, exceptions: &Vec<Uuid>) {
+    pub(crate) fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: &Vec<Uuid>) {
         if let Some(server_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
             port.send_message_to_all_peer(message_id,local_peer_uuid,network_port_shared_infos,message,send_args,just_authenticated,exceptions);
         }
@@ -743,7 +743,7 @@ impl NetworkConnection<ClientConnection> {
         }
     }
 
-    pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>) -> bool {
+    pub(crate) fn send_message_to_server(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>) -> bool {
         if let Some(client_connection) = self.0.get_mut(&connection_id)  {
             if client_connection.is_local_connection() {
                 return true
@@ -787,6 +787,12 @@ impl CurrentNetworkSides {
 
 impl LocalSessionUUID {
     pub fn get_session_uuid(&self) -> Option<Uuid> {
+        self.0
+    }
+}
+
+impl LocalPeerUUID {
+    pub fn get_peer_uuid(&self) -> Option<Uuid> {
         self.0
     }
 }

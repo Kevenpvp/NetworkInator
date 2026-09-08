@@ -9,7 +9,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
-use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
 use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
 use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
@@ -225,7 +225,7 @@ impl ClientPortTrait for TcpClientPort{
         true
     }
 
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _local_session_uuid: Option<Uuid>, _send_args: Option<Box<dyn Any>>) {
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _local_session_uuid: Option<Uuid>, _send_args: Option<&SendArgs>) {
         if let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosClient>()
         && let Some(runtime) = &default_network_port_shared_infos.get_runtime()
         && let Some(owned_write_half) = &self.owned_write_half

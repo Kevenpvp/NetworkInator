@@ -7,7 +7,7 @@ use bevy::asset::uuid::Uuid;
 use bevy::log::warn;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
 use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
 use crate::shared::port_systems::inject_extract_uuid::inject_uuid;
 
@@ -236,7 +236,7 @@ impl ClientPortTrait for UdpClientPort {
         false
     }
 
-    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, _send_args: Option<Box<dyn Any>>) {
+    fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, _send_args: Option<&SendArgs>) {
         if let Some(local_session_uuid) = local_session_uuid && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosClient>()
             && let Some(runtime) = &default_network_port_shared_infos.get_runtime()
             && let Some(udp_socket) = &self.udp_socket

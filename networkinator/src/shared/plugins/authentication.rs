@@ -204,7 +204,7 @@ fn check_peer_authenticated(
                         server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                             session_uuid,
                             peer_uuid: *current_peer_uuid,
-                        }, *current_peer_uuid, &None);
+                        }, *current_peer_uuid, None);
                     }
                 }else if is_authentication_connection && port.is_main_port() && !port.is_session_authenticated(&message.session_uuid) {
                     let peer_uuid = Uuid::new_v4();
@@ -217,7 +217,7 @@ fn check_peer_authenticated(
                     server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                         session_uuid: message.session_uuid,
                         peer_uuid,
-                    }, peer_uuid, &None);
+                    }, peer_uuid, None);
                 }
             }
         }
@@ -234,7 +234,7 @@ fn check_peer_authenticated(
             server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                 session_uuid,
                 peer_uuid: *current_peer_uuid,
-            }, *current_peer_uuid, &None);
+            }, *current_peer_uuid, None);
         }
     }
 }

@@ -13,8 +13,14 @@ use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, Loc
 #[cfg(target_arch = "wasm32")]
 type DispatchMessage = Box<dyn Any>;
 
+#[cfg(target_arch = "wasm32")]
+pub type SendArgs = Box<dyn Any>;
+
 #[cfg(not(target_arch = "wasm32"))]
 type DispatchMessage = Box<dyn Any + Send + Sync>;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub type SendArgs = Box<dyn Any + Send + Sync>;
 
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Sync {
     fn deserialize(data: &[u8]) -> Self where Self: Sized;
@@ -94,7 +100,7 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
 }
 
 impl<'w, 's> ServerConnectionParams<'w, 's> {
-    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: &Option<Box<dyn Any>>){
+    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<&SendArgs>){
         if let Some(local_peer_uuid) = &self.local_peer_uuid.0
         && local_peer_uuid == &peer_id
         {
@@ -115,7 +121,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
         }
     }
 
-    pub fn send_message_for_all<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, just_authenticated: bool, send_args: &Option<Box<dyn Any>>, exceptions: Vec<Uuid>){
+    pub fn send_message_for_all<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: Vec<Uuid>){
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
@@ -143,7 +149,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 }
 
 impl<'w, 's> ClientConnectionParams<'w, 's> {
-    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, local_session_uuid: Option<Uuid>, send_args: Option<Box<dyn Any>>){
+    pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>){
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id)

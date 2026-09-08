@@ -8,7 +8,7 @@ use bevy::asset::uuid::Uuid;
 use bevy::log::warn;
 use tokio::net::{UdpSocket};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
 use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
 use crate::shared::port_systems::inject_extract_uuid::extract_uuid;
 
@@ -274,7 +274,7 @@ impl ServerPortTrait for UdpServerPort {
         false
     }
 
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>) {
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>) {
         if let Some(udp_socket) = &self.udp_socket && let Some(session_uuid) = self.peer_uuid_to_session_uuid.get_mut(&peer_id)
             && let Some(peer_connected) = self.peers_connected.get_mut(session_uuid)
             && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
@@ -330,7 +330,7 @@ impl ServerPortTrait for UdpServerPort {
         annoy_anonymous_sessions
     }
 
-    fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
+    fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
         if let Some(udp_socket) = &self.udp_socket && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
             && let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
 

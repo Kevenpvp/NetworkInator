@@ -11,7 +11,7 @@ use bevy::asset::uuid::Uuid;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
-use crate::shared::plugins::messaging::{MessageInfos, MessageTrait};
+use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
 use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
 use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
@@ -317,7 +317,7 @@ impl ServerPortTrait for TcpServerPort{
         true
     }
 
-    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>) {
+    fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>) {
         if let Some(peer_authenticated) = self.peers_authenticated.get_mut(&peer_id)
         && let Some(peer_connected) = self.peers_connected.get_mut(peer_authenticated)
         && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
@@ -387,7 +387,7 @@ impl ServerPortTrait for TcpServerPort{
         annoy_anonymous_sessions
     }
 
-    fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: &Option<Box<dyn Any>>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
+    fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
         if let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
             && let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
 
