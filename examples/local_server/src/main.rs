@@ -1,3 +1,4 @@
+/*
 use bevy::app::Update;
 use networkinator::shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin};
 use bevy::DefaultPlugins;
@@ -42,12 +43,15 @@ fn read_hi_message(
     }
 }
 
-fn main() {
-    let mut app = App::new();
+ */
 
-    app.add_plugins((DefaultPlugins,ClientNetworkPlugin,ServerNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
-    app.add_systems(Startup,start_connection);
-    app.add_systems(Update,(send_hi_message,read_hi_message));
-    app.register_message::<HiMessage>();
-    app.run();
+fn main() {
+    println!("Hello, world!");
+    //let mut app = App::new();
+
+    //app.add_plugins((DefaultPlugins,ClientNetworkPlugin,ServerNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
+    //app.add_systems(Startup,start_connection);
+    //app.add_systems(Update,(send_hi_message,read_hi_message));
+    //app.register_message::<HiMessage>();
+    //app.run();
 }

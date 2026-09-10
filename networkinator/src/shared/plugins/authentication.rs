@@ -32,6 +32,12 @@ pub struct ClientPortAuthenticated{
     pub connection_id: u32
 }
 
+#[derive(Message)]
+pub struct ClientAuthenticatedOnServer{
+    pub peer_uuid: Uuid,
+    pub session_uuid: Uuid
+}
+
 impl Plugin for AuthenticationPlugin{
     fn build(&self, app: &mut App) {
         let (is_client, is_local_server, is_dedicated_server) = {
@@ -50,6 +56,7 @@ impl Plugin for AuthenticationPlugin{
 
         if is_dedicated_server || is_local_server {
             app.init_resource::<AuthenticatedSessions>();
+            app.add_message::<ClientAuthenticatedOnServer>();
             app.add_systems(PreUpdate,(check_peer_authenticated,authenticate_unreliable_ports,check_authenticated_peers_are_connected).chain());
             
             if is_local_server {
@@ -71,6 +78,7 @@ fn authenticate_local_peer(
     mut server_network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     mut client_network_connection: NetResMut<NetworkConnection<ClientConnection>>,
     mut client_port_authenticated: MessageWriter<ClientPortAuthenticated>,
+    mut client_authenticated_on_server: MessageWriter<ClientAuthenticatedOnServer>,
 ){
     if local_peer_uuid.0.is_none() {
         let new_peer_uuid = Uuid::new_v4();
@@ -89,6 +97,13 @@ fn authenticate_local_peer(
     for connection in server_network_connection.0.values_mut() {
         if let Some(main_port) = connection.get_port(0) && !main_port.is_session_authenticated(&session_uuid) {
             main_port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid), true);
+
+            if connection.is_authentication_connection() {
+                client_authenticated_on_server.write(ClientAuthenticatedOnServer{
+                    peer_uuid: current_peer_uuid,
+                    session_uuid,
+                });
+            }
         }
 
         let ports_amount = connection.get_ports_amount();
@@ -179,7 +194,8 @@ fn check_peer_authenticated(
     mut message_received_from_anonymous_peer: MessageReader<MessageReceivedFromAnonymousPeer<AuthenticationMessage>>,
     mut message_received_from_authenticated_peer: MessageReader<MessageReceivedFromPeer<AuthenticationMessage>>,
     mut authenticated_sessions: NetResMut<AuthenticatedSessions>,
-    mut server_connections_params: ServerConnectionParams
+    mut server_connections_params: ServerConnectionParams,
+    mut client_authenticated_on_server: MessageWriter<ClientAuthenticatedOnServer>,
 ){
     for message in message_received_from_anonymous_peer.read() {
         let auth_message = &message.message;
@@ -214,6 +230,11 @@ fn check_peer_authenticated(
                     authenticated_sessions.0.insert(message.session_uuid, peer_uuid);
                     authenticated_sessions.0.insert(peer_uuid, message.session_uuid);
 
+                    client_authenticated_on_server.write(ClientAuthenticatedOnServer{
+                        peer_uuid,
+                        session_uuid: message.session_uuid,
+                    });
+
                     server_connections_params.send_message::<AuthenticatedFromServer>(message.connection_id, message.port_id, AuthenticatedFromServer{
                         session_uuid: message.session_uuid,
                         peer_uuid,
@@ -244,7 +265,6 @@ fn check_authenticated_peers_are_connected(
     mut authenticated_sessions: NetResMut<AuthenticatedSessions>,
     local_peer_uuid: Option<NetRes<LocalPeerUUID>>,
 ){
-
     let mut removed_peers: Vec<Uuid> = Vec::new();
 
     authenticated_sessions.0.retain(|_, peer_uuid| {

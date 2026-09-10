@@ -11,11 +11,20 @@ homepage.workspace = true
 
 [dependencies]
 bevy = { workspace = true }
-tokio = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 erased-serde = { workspace = true }
 message_pro_macro = "0.1.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time", "io-util"] }
+gloo-net = { version = "0.7.0" , features = ["websocket"] }
+gloo-timers = { version = "0.4.0", features = ["futures"] }
+futures-util = { version = "0.3.34", features = ["sink"] }
+send_wrapper = { version = "0.6.0" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = []

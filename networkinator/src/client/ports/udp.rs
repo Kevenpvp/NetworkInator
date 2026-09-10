@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 use std::any::Any;
 use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr};
@@ -189,6 +190,7 @@ impl ClientPortTrait for UdpClientPort {
         if self.started && Instant::now().duration_since(self.last_pong_instant) >= Duration::from_secs(120) {
             self.started = false;
             self.starting = false;
+            self.authenticated = false;
 
             if let Some(udp_socket) = self.udp_socket.take() {
                 drop(udp_socket);
@@ -201,6 +203,7 @@ impl ClientPortTrait for UdpClientPort {
             Ok((error, first_started)) => {
                 self.started = false;
                 self.starting = false;
+                self.authenticated = false;
 
                 if let Some(udp_socket) = self.udp_socket.take() {
                     drop(udp_socket);

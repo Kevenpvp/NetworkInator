@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 use std::any::Any;
 use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr};
@@ -198,6 +199,7 @@ impl ClientPortTrait for TcpClientPort{
             Ok((error, first_started)) => {
                 self.started = false;
                 self.starting = false;
+                self.authenticated = false;
 
                 self.close();
 

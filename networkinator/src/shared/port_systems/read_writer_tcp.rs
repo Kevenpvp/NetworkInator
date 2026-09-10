@@ -1,5 +1,8 @@
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::tcp::{OwnedWriteHalf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Error;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::io::{AsyncWriteExt};
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
@@ -88,6 +91,7 @@ pub fn value_from_number(number: f64, bytes: BytesOptions) -> ReadValue {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn write_from_settings(
     write_half: &mut OwnedWriteHalf,
     value: &ReadValue,

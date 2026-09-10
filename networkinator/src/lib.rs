@@ -1,4 +1,8 @@
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::prelude::{Res, ResMut};
+
+#[cfg(target_arch = "wasm32")]
+use bevy::prelude::{NonSend, NonSendMut};
 
 pub mod client;
 pub mod server;

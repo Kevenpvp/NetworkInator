@@ -34,7 +34,7 @@ pub struct LocalSessionUUID(pub(crate) Option<Uuid>);
 pub struct LocalPeerUUID(pub(crate) Option<Uuid>);
 
 #[cfg(target_arch = "wasm32")]
-pub trait ServerPortTrait{
+pub trait ServerPortTrait: Send {
     fn start(&mut self, network_port_shared_infos: &dyn Any);
     fn close(&mut self);
     fn started(&mut self) -> (bool,bool);
@@ -192,7 +192,7 @@ pub trait ServerPortTrait: Send + Sync{
 }
 
 #[cfg(target_arch = "wasm32")]
-pub trait ClientPortTrait {
+pub trait ClientPortTrait: Send {
     fn start(&mut self, network_port_shared_infos: &dyn Any);
     fn close(&mut self);
     fn started(&mut self) -> (bool,bool);
@@ -347,7 +347,7 @@ impl Plugin for NetworkPlugin {
 
         if is_client || is_local_server {
             #[cfg(target_arch = "wasm32")]
-            app.init_non_send_resource::<NetworkConnection<ClientConnection>>();
+            app.init_non_send::<NetworkConnection<ClientConnection>>();
 
             #[cfg(not(target_arch = "wasm32"))]
             app.init_resource::<NetworkConnection<ClientConnection>>();
@@ -373,6 +373,9 @@ impl NetworkPortSharedInfos for DefaultNetworkPortSharedInfosServer {
         }
 
         Box::new(DefaultNetworkPortSharedInfosServer {
+            #[cfg(target_arch = "wasm32")]
+            runtime: None,
+            #[cfg(not(target_arch = "wasm32"))]
             runtime: Some(Runtime::new().unwrap()),
             semaphore
         })
@@ -396,6 +399,9 @@ impl NetworkPortSharedInfos for DefaultNetworkPortSharedInfosClient {
         Self: Sized
     {
         Box::new(DefaultNetworkPortSharedInfosClient {
+            #[cfg(target_arch = "wasm32")]
+            runtime: None,
+            #[cfg(not(target_arch = "wasm32"))]
             runtime: Some(Runtime::new().unwrap())
         })
     }

@@ -5,8 +5,10 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-networkinator = { path = "../../networkinator" }
-bevy = { workspace = true, features = ["dynamic_linking"]  }
+bevy = { workspace = true }
 serde = { workspace = true }
 message_pro_macro = { path = "../../message_pro_macro" }
 postcard = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { workspace = true, features = ["dynamic_linking"]  }

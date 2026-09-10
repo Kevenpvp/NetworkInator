@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 use std::any::Any;
 use std::collections::HashMap;
 use std::io::{Error};

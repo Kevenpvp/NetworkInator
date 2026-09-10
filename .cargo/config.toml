@@ -7,5 +7,16 @@ rustflags = [
     "-Znext-solver=coherence"
 ]
 
+[target.wasm32-unknown-unknown]
+linker = "rust-lld.exe"
+rustdocflags = ["-Clinker=rust-lld.exe"]
+rustflags = [
+    "-Zshare-generics=off",
+    "-Znext-solver=coherence"
+]
+
 [alias]
 ci = "run --package ci --"
+
+[build]
+# target = "wasm32-unknown-unknown"

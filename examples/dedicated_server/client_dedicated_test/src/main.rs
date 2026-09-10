@@ -3,21 +3,33 @@ use bevy::DefaultPlugins;
 use bevy::prelude::{App, MessageReader, Startup, Update};
 use serde::{Deserialize, Serialize};
 use message_pro_macro::ConnectionMessage;
+#[cfg(not(target_arch = "wasm32"))]
 use networkinator::client::ports::tcp::TcpClientSettings;
+#[cfg(not(target_arch = "wasm32"))]
 use networkinator::client::ports::udp::UdpClientSettings;
 use networkinator::{NetRes, NetResMut};
 use networkinator::client::plugins::network::ClientNetworkPlugin;
+#[cfg(target_arch = "wasm32")]
+use networkinator::client::ports::wasm_websocket::WasmWebSocketClientSettings;
 use networkinator::shared::plugins::authentication::{AuthenticationPlugin, ClientPortAuthenticated};
 use networkinator::shared::plugins::network::{ClientConnection, DefaultNetworkPortSharedInfosClient, LocalSessionUUID, NetworkConnection, NetworkPlugin};
 
 #[derive(Serialize,Deserialize,ConnectionMessage)]
 pub struct HiMessage(String);
 
+#[cfg(not(target_arch = "wasm32"))]
 fn start_connection(
     mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
 ) {
     network_connection.start_connection::<DefaultNetworkPortSharedInfosClient>(0, Box::new(TcpClientSettings::default()),true);
     network_connection.open_secondary_port(0, Box::new(UdpClientSettings::default().with_server_port(8070)));
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_connection(
+    mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
+) {
+    network_connection.start_connection::<DefaultNetworkPortSharedInfosClient>(0, Box::new(WasmWebSocketClientSettings::default()),true);
 }
 
 fn send_hi_message(
@@ -31,8 +43,9 @@ fn send_hi_message(
 }
 
 fn main() {
+
     let mut app = App::new();
-    
+
     app.add_plugins((DefaultPlugins,ClientNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
     app.add_systems(Startup,start_connection);
     app.add_systems(Update,send_hi_message);

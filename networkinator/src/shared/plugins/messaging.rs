@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{Commands, Message, Messages, ResMut, Resource, Update, World};
+use bevy::prelude::{Commands, Message, Messages, Resource, Update, World};
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
@@ -11,10 +11,10 @@ use crate::{NetRes, NetResMut};
 use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
-type DispatchMessage = Box<dyn Any>;
+type DispatchMessage = Box<dyn Any + Send>;
 
 #[cfg(target_arch = "wasm32")]
-pub type SendArgs = Box<dyn Any>;
+pub type SendArgs = Box<dyn Any + Send>;
 
 #[cfg(not(target_arch = "wasm32"))]
 type DispatchMessage = Box<dyn Any + Send + Sync>;
@@ -22,7 +22,16 @@ type DispatchMessage = Box<dyn Any + Send + Sync>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type SendArgs = Box<dyn Any + Send + Sync>;
 
-pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Sync {
+#[cfg(target_arch = "wasm32")]
+pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
+    fn deserialize(data: &[u8]) -> Self where Self: Sized;
+    fn as_authentication(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
     fn deserialize(data: &[u8]) -> Self where Self: Sized;
     fn as_authentication(&self) -> bool {
         false
@@ -130,7 +139,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             self.connection.send_message_to_all_peer(*message_id, connection_id, port_id, &message, local_peer_uuid, just_authenticated, send_args, &exceptions);
 
             if let Some(local_peer_uuid) = local_peer_uuid
-                && !(exceptions.contains(local_peer_uuid))
+                && !exceptions.contains(local_peer_uuid)
             {
                 self.commands.queue(move |world: &mut World| {
                     world.write_message(MessageReceivedFromServer {
@@ -143,7 +152,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
         }
     }
 
-    pub fn get_connections(&mut self) -> &mut ResMut<'w, NetworkConnection<ServerConnection>> {
+    pub fn get_connections(&mut self) -> &mut NetResMut<'w, NetworkConnection<ServerConnection>> {
         &mut self.connection
     }
 }
@@ -168,7 +177,7 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
         }
     }
 
-    pub fn get_connections(&mut self) -> &mut ResMut<'w, NetworkConnection<ClientConnection>> {
+    pub fn get_connections(&mut self) -> &mut NetResMut<'w, NetworkConnection<ClientConnection>> {
         &mut self.connection
     }
 }
