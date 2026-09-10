@@ -34,6 +34,7 @@ pub struct ClientPortAuthenticated{
 
 #[derive(Message)]
 pub struct ClientAuthenticatedOnServer{
+    pub connection_id: u32,
     pub peer_uuid: Uuid,
     pub session_uuid: Uuid
 }
@@ -94,12 +95,13 @@ fn authenticate_local_peer(
     let session_uuid = local_session_uuid.0.unwrap();
     let current_peer_uuid = local_peer_uuid.0.unwrap();
     
-    for connection in server_network_connection.0.values_mut() {
+    for (connection_id,connection) in server_network_connection.0.iter_mut() {
         if let Some(main_port) = connection.get_port(0) && !main_port.is_session_authenticated(&session_uuid) {
             main_port.authenticate_peer(session_uuid, current_peer_uuid, Some(session_uuid), true);
 
             if connection.is_authentication_connection() {
                 client_authenticated_on_server.write(ClientAuthenticatedOnServer{
+                    connection_id: *connection_id,
                     peer_uuid: current_peer_uuid,
                     session_uuid,
                 });
@@ -231,6 +233,7 @@ fn check_peer_authenticated(
                     authenticated_sessions.0.insert(peer_uuid, message.session_uuid);
 
                     client_authenticated_on_server.write(ClientAuthenticatedOnServer{
+                        connection_id: message.connection_id,
                         peer_uuid,
                         session_uuid: message.session_uuid,
                     });
