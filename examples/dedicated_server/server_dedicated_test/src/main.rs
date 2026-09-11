@@ -1,20 +1,26 @@
-#[cfg(target_arch = "wasm32")]
 use bevy::prelude::{App};
+pub(crate) use bevy::DefaultPlugins;
 
-#[cfg(not(target_arch = "wasm32"))] use networkinator::shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin, MessagingPlugin};
-#[cfg(not(target_arch = "wasm32"))] use bevy::app::Update;
-#[cfg(not(target_arch = "wasm32"))] use bevy::DefaultPlugins;
-#[cfg(not(target_arch = "wasm32"))] use bevy::prelude::{App, MessageReader, Startup};
-#[cfg(not(target_arch = "wasm32"))] use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))] use message_pro_macro::ConnectionMessage;
-#[cfg(not(target_arch = "wasm32"))] use networkinator::NetResMut;
-#[cfg(not(target_arch = "wasm32"))] use networkinator::server::plugins::network::ServerNetworkPlugin;
+#[cfg(target_arch = "wasm32")]
+use bevy::log::warn;
+
 #[cfg(not(target_arch = "wasm32"))]
-use networkinator::server::ports::tcp::TcpServerSettings;
+pub mod not_wasm_uses {
+    pub(crate) use networkinator::shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin, MessagingPlugin};
+    pub(crate) use bevy::app::Update;
+    pub(crate) use bevy::prelude::{MessageReader, Startup};
+    pub(crate) use serde::{Deserialize, Serialize};
+    pub(crate) use message_pro_macro::ConnectionMessage;
+    pub(crate) use networkinator::NetResMut;
+    pub(crate) use networkinator::server::plugins::network::ServerNetworkPlugin;
+    pub(crate) use networkinator::server::ports::tcp::TcpServerSettings;
+    pub(crate) use networkinator::server::ports::udp::UdpServerSettings;
+    pub(crate) use networkinator::shared::plugins::authentication::AuthenticationPlugin;
+    pub(crate)use networkinator::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-use networkinator::server::ports::udp::UdpServerSettings;
-#[cfg(not(target_arch = "wasm32"))] use networkinator::shared::plugins::authentication::AuthenticationPlugin;
-#[cfg(not(target_arch = "wasm32"))] use networkinator::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
+use not_wasm_uses::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize,Deserialize,ConnectionMessage)]
@@ -40,9 +46,17 @@ fn read_hi_message(
 fn main() {
     let mut app = App::new();
 
-    #[cfg(not(target_arch = "wasm32"))]app.add_plugins((DefaultPlugins,ServerNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
-    #[cfg(not(target_arch = "wasm32"))]app.add_systems(Startup,start_connection);
-    #[cfg(not(target_arch = "wasm32"))]app.add_systems(Update,read_hi_message);
-    #[cfg(not(target_arch = "wasm32"))]app.register_message::<HiMessage>();
+    #[cfg(not(target_arch = "wasm32"))] {
+        app.add_plugins((DefaultPlugins,ServerNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
+        app.add_systems(Startup,start_connection);
+        app.add_systems(Update,read_hi_message);
+        app.register_message::<HiMessage>();
+    }
+
+    #[cfg(target_arch = "wasm32")] {
+        warn!("Server doesn't work on WASM");
+        app.add_plugins(DefaultPlugins);
+    }
+
     app.run();
 }

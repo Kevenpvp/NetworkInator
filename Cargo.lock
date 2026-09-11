@@ -3496,6 +3496,7 @@ version = "0.1.5"
 dependencies = [
  "bevy",
  "message_pro_macro 0.1.5",
+ "networkinator",
  "postcard",
  "serde",
 ]

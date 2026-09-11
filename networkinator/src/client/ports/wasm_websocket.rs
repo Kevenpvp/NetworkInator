@@ -56,6 +56,12 @@ impl WasmWebSocketClientSettings {
 
         self
     }
+
+    pub fn with_url(mut self, url: String) -> Self {
+        self.url = url;
+
+        self
+    }
 }
 
 impl Default for WasmWebSocketClientSettings{

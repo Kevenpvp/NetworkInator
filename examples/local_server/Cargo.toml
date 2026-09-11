@@ -5,6 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+networkinator = {path = "../../networkinator"}
 bevy = { workspace = true }
 serde = { workspace = true }
 message_pro_macro = { path = "../../message_pro_macro" }

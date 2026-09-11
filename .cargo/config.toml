@@ -19,4 +19,4 @@ rustflags = [
 ci = "run --package ci --"
 
 [build]
-# target = "wasm32-unknown-unknown"
+#target = "wasm32-unknown-unknown"
