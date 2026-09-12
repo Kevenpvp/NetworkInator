@@ -43,7 +43,6 @@ fn send_hi_message(
 }
 
 fn main() {
-
     let mut app = App::new();
 
     app.add_plugins((DefaultPlugins,ClientNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));

@@ -549,6 +549,10 @@ impl ServerConnection {
         self.peers_connected.remove(uuid);
         self.peers_authenticated.remove(uuid);
     }
+
+    pub fn is_peer_authenticated(&self, peer_uuid: &Uuid) -> bool {
+        self.peers_authenticated.contains_key(peer_uuid)
+    }
 }
 
 impl ClientConnection {
