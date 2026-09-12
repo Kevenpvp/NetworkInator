@@ -437,3 +437,23 @@ fn dispatch_message_client<T: MessageTrait>(world: &mut World, message: Dispatch
         connection_id,
     });
 }
+
+impl MessagesRegistryServer {
+    pub fn get_registers(&self) -> &HashMap<TypeId, u32> {
+        &self.2
+    }
+
+    pub fn get_amount_registered(&self) -> u32 {
+        self.0
+    }
+}
+
+impl MessagesRegistryClient {
+    pub fn get_registers(&self) -> &HashMap<TypeId, u32> {
+        &self.2
+    }
+
+    pub fn get_amount_registered(&self) -> u32 {
+        self.0
+    }
+}
