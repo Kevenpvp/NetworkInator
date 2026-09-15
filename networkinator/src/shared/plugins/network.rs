@@ -33,11 +33,13 @@ pub struct LocalSessionUUID(pub(crate) Option<Uuid>);
 #[derive(Resource,Default)]
 pub struct LocalPeerUUID(pub(crate) Option<Uuid>);
 
+#[allow(dead_code)]
 pub struct AuthenticatedInfos {
     instant: Instant,
     session_uuid: Uuid
 }
 
+#[allow(dead_code)]
 pub struct ConnectedInfos {
     instant: Instant,
     peer_uuid: Option<Uuid>
@@ -578,6 +580,10 @@ impl ServerConnection {
         }
 
         false
+    }
+
+    pub fn is_peer_connected(&self, peer_uuid: &Uuid) -> bool {
+        self.peers_authenticated.contains_key(peer_uuid)
     }
 }
 
