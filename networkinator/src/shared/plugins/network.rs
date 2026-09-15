@@ -33,6 +33,11 @@ pub struct LocalSessionUUID(pub(crate) Option<Uuid>);
 #[derive(Resource,Default)]
 pub struct LocalPeerUUID(pub(crate) Option<Uuid>);
 
+pub struct AuthenticatedInfos {
+    instant: Instant,
+    peer_uuid: Uuid
+}
+
 #[cfg(target_arch = "wasm32")]
 pub trait ServerPortTrait: Send {
     fn start(&mut self, network_port_shared_infos: &dyn Any);
@@ -309,7 +314,7 @@ pub struct ServerConnection{
     secondary_ports: HashMap<u32, Box<dyn ServerPortTrait>>,
     network_port_shared_infos: Option<Box<dyn NetworkPortSharedInfos>>,
     pub(crate) peers_connected: HashMap<Uuid, Instant>,
-    pub(crate) peers_authenticated: HashMap<Uuid, Instant>,
+    pub(crate) peers_authenticated: HashMap<Uuid, AuthenticatedInfos>,
     max_connections: u32,
     authentication_connection: bool
 }
@@ -536,9 +541,17 @@ impl ServerConnection {
     pub fn peer_authenticated(&mut self, current_session_uuid: Uuid, new_session_uuid: Option<Uuid>, peer_uuid: Uuid, instant: Instant){
         if let Some(new_session_uuid) = new_session_uuid && let Some(old_instant) = self.peers_connected.remove(&current_session_uuid) {
             self.peers_connected.insert(new_session_uuid,old_instant);
-        }
 
-        self.peers_authenticated.insert(peer_uuid,instant);
+            self.peers_authenticated.insert(new_session_uuid,AuthenticatedInfos {
+                instant,
+                peer_uuid,
+            });
+        }else {
+            self.peers_authenticated.insert(current_session_uuid,AuthenticatedInfos {
+                instant,
+                peer_uuid,
+            });
+        }
     }
 
     pub fn peer_connected(&mut self, uuid: Uuid, instant: Instant){
@@ -550,7 +563,7 @@ impl ServerConnection {
         self.peers_authenticated.remove(uuid);
     }
 
-    pub fn is_peer_authenticated(&self, peer_uuid: &Uuid) -> bool {
+    pub fn is_season_authenticated(&self, peer_uuid: &Uuid) -> bool {
         self.peers_authenticated.contains_key(peer_uuid)
     }
 }
@@ -721,9 +734,9 @@ impl NetworkConnection<ServerConnection> {
         None
     }
 
-    pub fn get_peers_authenticated(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,Instant>> {
+    pub fn get_peers_authenticated(&mut self, connection_id: u32) -> Option<&HashMap<Uuid, AuthenticatedInfos>> {
         if let Some(connection) = self.0.get_mut(&connection_id){
-            return  Some(&connection.peers_authenticated)
+            return Some(&connection.peers_authenticated)
         }
 
         None
