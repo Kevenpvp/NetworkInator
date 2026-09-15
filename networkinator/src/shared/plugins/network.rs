@@ -546,8 +546,10 @@ impl ServerConnection {
     }
 
     pub fn peer_authenticated(&mut self, current_session_uuid: Uuid, new_session_uuid: Option<Uuid>, peer_uuid: Uuid, instant: Instant){
-        if let Some(new_session_uuid) = new_session_uuid && let Some(old_instant) = self.peers_connected.remove(&current_session_uuid) {
-            self.peers_connected.insert(new_session_uuid,old_instant);
+        if let Some(new_session_uuid) = new_session_uuid && let Some(mut old_connected_infos) = self.peers_connected.remove(&current_session_uuid) {
+            old_connected_infos.peer_uuid = Some(peer_uuid);
+
+            self.peers_connected.insert(new_session_uuid,old_connected_infos);
 
             self.peers_authenticated.insert(peer_uuid,AuthenticatedInfos {
                 instant,
