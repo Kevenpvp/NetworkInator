@@ -35,7 +35,12 @@ pub struct LocalPeerUUID(pub(crate) Option<Uuid>);
 
 pub struct AuthenticatedInfos {
     instant: Instant,
-    peer_uuid: Uuid
+    session_uuid: Uuid
+}
+
+pub struct ConnectedInfos {
+    instant: Instant,
+    peer_uuid: Option<Uuid>
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -313,7 +318,7 @@ pub struct ServerConnection{
     main_port: Option<Box<dyn ServerPortTrait>>,
     secondary_ports: HashMap<u32, Box<dyn ServerPortTrait>>,
     network_port_shared_infos: Option<Box<dyn NetworkPortSharedInfos>>,
-    pub(crate) peers_connected: HashMap<Uuid, Instant>,
+    pub(crate) peers_connected: HashMap<Uuid, ConnectedInfos>,
     pub(crate) peers_authenticated: HashMap<Uuid, AuthenticatedInfos>,
     max_connections: u32,
     authentication_connection: bool
@@ -542,29 +547,37 @@ impl ServerConnection {
         if let Some(new_session_uuid) = new_session_uuid && let Some(old_instant) = self.peers_connected.remove(&current_session_uuid) {
             self.peers_connected.insert(new_session_uuid,old_instant);
 
-            self.peers_authenticated.insert(new_session_uuid,AuthenticatedInfos {
+            self.peers_authenticated.insert(peer_uuid,AuthenticatedInfos {
                 instant,
-                peer_uuid,
+                session_uuid: new_session_uuid,
             });
         }else {
-            self.peers_authenticated.insert(current_session_uuid,AuthenticatedInfos {
+            self.peers_authenticated.insert(peer_uuid,AuthenticatedInfos {
                 instant,
-                peer_uuid,
+                session_uuid: current_session_uuid,
             });
         }
     }
 
     pub fn peer_connected(&mut self, uuid: Uuid, instant: Instant){
-        self.peers_connected.insert(uuid,instant);
+        self.peers_connected.insert(uuid,ConnectedInfos{
+            instant,
+            peer_uuid: None,
+        });
     }
 
     pub fn peer_disconnected(&mut self, uuid: &Uuid){
-        self.peers_connected.remove(uuid);
-        self.peers_authenticated.remove(uuid);
+        if let Some(connected_infos) = self.peers_connected.remove(uuid) && let Some(peer_uuid) = &connected_infos.peer_uuid {
+            self.peers_authenticated.remove(peer_uuid);
+        };
     }
 
-    pub fn is_season_authenticated(&self, peer_uuid: &Uuid) -> bool {
-        self.peers_authenticated.contains_key(peer_uuid)
+    pub fn is_season_authenticated(&self, season_uuid: &Uuid) -> bool {
+        if let Some(connected_infos) = self.peers_connected.get(season_uuid) {
+            return connected_infos.peer_uuid.is_some()
+        }
+
+        false
     }
 }
 
@@ -726,7 +739,7 @@ impl NetworkConnection<ServerConnection> {
         }
     }
 
-    pub fn get_peers_connected(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,Instant>> {
+    pub fn get_peers_connected(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,ConnectedInfos>> {
         if let Some(connection) = self.0.get_mut(&connection_id){
             return Some(&connection.peers_connected)
         }
