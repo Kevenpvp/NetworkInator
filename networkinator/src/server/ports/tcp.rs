@@ -29,12 +29,13 @@ pub struct TcpServerSettings{
 pub struct PeerConnected{
     peer_id: Option<Uuid>,
     owned_semaphore_permit: Option<OwnedSemaphorePermit>,
-    owned_read_half: OwnedReadHalf,
+    owned_read_half: Arc<OwnedReadHalf>,
     owned_write_half: Arc<Mutex<OwnedWriteHalf>>,
     socket_addr: SocketAddr,
     internal_buffer: Vec<u8>,
     non_authenticated_instant: Instant,
     is_local: bool,
+    peeking: bool
 }
 
 pub struct TcpServerPort{
@@ -458,7 +459,9 @@ impl ServerPortTrait for TcpServerPort{
         let now = Instant::now();
 
         self.peers_connected.retain(|session_uuid, peer_connected| {
-            if peer_connected.peer_id.is_some() { return true }
+            if peer_connected.peer_id.is_some() {
+                return true
+            }
 
             if now.duration_since(peer_connected.non_authenticated_instant) >= Duration::from_secs(120) {
                 peers.insert(*session_uuid, (peer_connected.peer_id, Error::new(ErrorKind::TimedOut, "Didnt authenticated in time")));
@@ -493,12 +496,13 @@ impl ServerPortTrait for TcpServerPort{
             peers_connected.insert(session_uuid, PeerConnected{
                 peer_id: None,
                 owned_semaphore_permit,
-                owned_read_half,
+                owned_read_half: Arc::new(owned_read_half),
                 owned_write_half: Arc::new(Mutex::from(owned_write_half)),
                 socket_addr,
                 internal_buffer: Vec::new(),
                 non_authenticated_instant: Instant::now(),
-                is_local: false
+                is_local: false,
+                peeking: false
             });
 
             peers.push(session_uuid);
@@ -514,6 +518,12 @@ impl ServerPortTrait for TcpServerPort{
             let mut temp_buf = vec![0u8; buffer_size];
 
             match peer_connected.owned_read_half.try_read(&mut temp_buf) {
+                Ok(0) => {
+                    if let Err(send_error) = self.peer_disconnected_sender.send((*session_uuid, peer_connected.peer_id, Error::from(ErrorKind::TimedOut))) {
+                        warn!("Failed to send TCP peer port connection_aborted, error: {}", send_error);
+                        continue;
+                    }
+                }
                 Ok(n) => {
                     peer_connected.internal_buffer.extend_from_slice(&temp_buf[..n]);
                 }

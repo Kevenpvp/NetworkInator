@@ -185,7 +185,7 @@ pub fn check_peers_disconnected(
     for (connection_id,server_connection) in &mut network_connection.0 {
         if let Some(main_port) = server_connection.get_port(0) {
             let peers_dropped = main_port.get_peers_disconnected();
-
+            
             if !peers_dropped.is_empty() {
                 for uuid in peers_dropped.keys() {
                     server_connection.peer_disconnected(uuid)
