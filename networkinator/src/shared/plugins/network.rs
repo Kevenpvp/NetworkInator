@@ -726,7 +726,7 @@ impl NetworkConnection<ServerConnection> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: &Vec<Uuid>) {
+    pub fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: &Vec<Uuid>) {
         if let Some(server_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
             port.send_message_to_all_peer(message_id,local_peer_uuid,network_port_shared_infos,message,send_args,just_authenticated,exceptions);
         }
