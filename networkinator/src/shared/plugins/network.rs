@@ -759,8 +759,16 @@ impl NetworkConnection<ServerConnection> {
         None
     }
 
-    pub fn get_peers_authenticated(&mut self, connection_id: u32) -> Option<&HashMap<Uuid, AuthenticatedInfos>> {
+    pub fn get_peers_authenticated(&mut self, connection_id: u32) -> Option<&mut HashMap<Uuid, AuthenticatedInfos>> {
         if let Some(connection) = self.0.get_mut(&connection_id){
+            return Some(&mut connection.peers_authenticated)
+        }
+
+        None
+    }
+
+    pub fn get_peers_authenticated_immutable(&self, connection_id: u32) -> Option<&HashMap<Uuid, AuthenticatedInfos>> {
+        if let Some(connection) = self.0.get(&connection_id){
             return Some(&connection.peers_authenticated)
         }
 

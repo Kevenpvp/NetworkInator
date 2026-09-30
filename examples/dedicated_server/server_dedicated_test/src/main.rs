@@ -4,6 +4,7 @@ pub(crate) use bevy::DefaultPlugins;
 #[cfg(target_arch = "wasm32")]
 use bevy::log::warn;
 
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod not_wasm_uses {
     pub(crate) use networkinator::shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin, MessagingPlugin};
@@ -16,7 +17,9 @@ pub mod not_wasm_uses {
     pub(crate) use networkinator::server::ports::tcp::TcpServerSettings;
     pub(crate) use networkinator::server::ports::udp::UdpServerSettings;
     pub(crate) use networkinator::shared::plugins::authentication::AuthenticationPlugin;
-    pub(crate)use networkinator::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
+    pub(crate) use networkinator::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, NetworkConnection, NetworkPlugin, ServerConnection};
+    pub(crate) use networkinator::server::plugins::ping::PingPorts;
+    pub(crate) use networkinator::server::plugins::ping::ServerPing;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -29,9 +32,12 @@ pub struct HiMessage(String);
 #[cfg(not(target_arch = "wasm32"))]
 fn start_connection(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
+    mut ping_ports: NetResMut<PingPorts>
 ) {
     network_connection.start_connection::<DefaultNetworkPortSharedInfosServer>(0, 0, Box::new(TcpServerSettings::default()),true);
     network_connection.open_secondary_port(0, Box::new(UdpServerSettings::default().with_port(8070)));
+
+    ping_ports.add_ping_port(0,1,None);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -47,7 +53,7 @@ fn main() {
     let mut app = App::new();
 
     #[cfg(not(target_arch = "wasm32"))] {
-        app.add_plugins((DefaultPlugins,ServerNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
+        app.add_plugins((DefaultPlugins,ServerNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin,ServerPing));
         app.add_systems(Startup,start_connection);
         app.add_systems(Update,read_hi_message);
         app.register_message::<HiMessage>();

@@ -9,6 +9,7 @@ use networkinator::client::ports::tcp::TcpClientSettings;
 use networkinator::client::ports::udp::UdpClientSettings;
 use networkinator::{NetRes, NetResMut};
 use networkinator::client::plugins::network::ClientNetworkPlugin;
+use networkinator::client::plugins::ping::ClientPing;
 #[cfg(target_arch = "wasm32")]
 use networkinator::client::ports::wasm_websocket::WasmWebSocketClientSettings;
 use networkinator::shared::plugins::authentication::{AuthenticationPlugin, ClientPortAuthenticated};
@@ -45,7 +46,7 @@ fn send_hi_message(
 fn main() {
     let mut app = App::new();
 
-    app.add_plugins((DefaultPlugins,ClientNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin));
+    app.add_plugins((DefaultPlugins,ClientNetworkPlugin,NetworkPlugin,MessagingPlugin,AuthenticationPlugin,ClientPing));
     app.add_systems(Startup,start_connection);
     app.add_systems(Update,send_hi_message);
     app.register_message::<HiMessage>();

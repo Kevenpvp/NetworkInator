@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{Commands, Message, Messages, Resource, Update, World};
+use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, Messages, Resource, World};
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
+use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
+use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
 use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
@@ -198,15 +200,15 @@ impl Plugin for MessagingPlugin {
         if is_client || is_local_server {
             app.init_resource::<MessagesRegistryClient>();
 
-            app.add_systems(Update,check_messages_from_server);
+            app.add_systems(First,check_messages_from_server.after(client_port_disconnected));
 
             if is_local_server {
                 app.init_resource::<MessagesRegistryServer>();
-                app.add_systems(Update,check_messages_from_client);
+                app.add_systems(First,check_messages_from_client.after(server_port_disconnected));
             }
         }else if is_dedicated_server {
             app.init_resource::<MessagesRegistryServer>();
-            app.add_systems(Update,check_messages_from_client);
+            app.add_systems(First,check_messages_from_client.after(server_port_disconnected));
         }
     }
 }
@@ -312,7 +314,7 @@ impl MessageTraitPlugin for App {
     }
 }
 
-fn check_messages_from_client(
+pub fn check_messages_from_client(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     messages_registry_server: NetRes<MessagesRegistryServer>,
     mut commands: Commands,
@@ -357,10 +359,10 @@ fn check_messages_from_client(
     }
 }
 
-fn check_messages_from_server(
+pub fn check_messages_from_server(
     mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
     messages_registry_client: NetRes<MessagesRegistryClient>,
-    mut commands: Commands,
+    mut commands: Commands
 ){
     for (connection_id,connection) in network_connection.0.iter_mut(){
         if let Some(main_port) = connection.get_port(0){
