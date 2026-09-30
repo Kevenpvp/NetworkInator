@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use bevy::app::App;
-use bevy::prelude::{Plugin, Resource};
+use bevy::prelude::{Message, Plugin, Resource};
 use tokio::runtime::Runtime;
 use std::io::{Error};
 use std::net::SocketAddr;
@@ -39,11 +39,23 @@ pub struct AuthenticatedInfos {
     session_uuid: Uuid
 }
 
+#[derive(Message)]
+pub struct ConnectionClosed {
+    pub connection_id: u32,
+}
+
+#[derive(Message)]
+pub struct PortClosedManually {
+    pub connection_id: u32,
+    pub port_id: u32
+}
+
 #[allow(dead_code)]
 pub struct ConnectedInfos {
     instant: Instant,
     peer_uuid: Option<Uuid>
 }
+
 
 #[cfg(target_arch = "wasm32")]
 pub trait ServerPortTrait: Send {
@@ -354,8 +366,8 @@ impl Plugin for NetworkPlugin {
             )
         };
 
-        app.init_resource::<LocalSessionUUID>();
-        app.init_resource::<LocalPeerUUID>();
+        app.add_message::<PortClosedManually>();
+        app.add_message::<ConnectionClosed>();
 
         if is_client || is_local_server {
             #[cfg(target_arch = "wasm32")]
@@ -368,6 +380,9 @@ impl Plugin for NetworkPlugin {
                 #[cfg(not(target_arch = "wasm32"))]
                 app.init_resource::<NetworkConnection<ServerConnection>>();
             }
+
+            app.init_resource::<LocalSessionUUID>();
+            app.init_resource::<LocalPeerUUID>();
         }else if is_dedicated_server {
             #[cfg(not(target_arch = "wasm32"))]
             app.init_resource::<NetworkConnection<ServerConnection>>();
@@ -726,19 +741,19 @@ impl NetworkConnection<ServerConnection> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: &Vec<Uuid>) {
+    pub(crate) fn send_message_to_all_peer(&mut self, message_id: u32, connection_id: u32, port_id: u32, message: &dyn MessageTrait, local_peer_uuid: &Option<Uuid>, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: &Vec<Uuid>) {
         if let Some(server_connection) = self.0.get_mut(&connection_id) && let (Some(port),Some(network_port_shared_infos)) = server_connection.get_port_split(port_id) {
             port.send_message_to_all_peer(message_id,local_peer_uuid,network_port_shared_infos,message,send_args,just_authenticated,exceptions);
         }
     }
 
-    pub fn close_port(&mut self, connection_id: u32, port_id: u32) {
+    pub(crate) fn close_port(&mut self, connection_id: u32, port_id: u32) {
         if let Some(connection) = self.0.get_mut(&connection_id) {
             connection.close_port(port_id);
         }
     }
 
-    pub fn close_connection(&mut self, connection_id: u32) {
+    pub(crate) fn close_connection(&mut self, connection_id: u32) {
         if let Some(mut server_connection) = self.0.remove(&connection_id){
             server_connection.close();
             drop(server_connection);
@@ -813,13 +828,13 @@ impl NetworkConnection<ClientConnection> {
         }
     }
 
-    pub fn close_port(&mut self, connection_id: u32, port_id: u32) {
+    pub(crate) fn close_port(&mut self, connection_id: u32, port_id: u32) {
         if let Some(connection) = self.0.get_mut(&connection_id) {
             connection.close_port(port_id);
         }
     }
 
-    pub fn close_connection(&mut self, connection_id: u32) {
+    pub(crate) fn close_connection(&mut self, connection_id: u32) {
         if let Some(mut client_connection) = self.0.remove(&connection_id){
             client_connection.close();
             drop(client_connection);

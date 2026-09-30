@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
 use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
 use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
-use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, ServerConnection};
+use crate::shared::plugins::network::{ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, PortClosedManually, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
 type DispatchMessage = Box<dyn Any + Send>;
@@ -74,7 +74,7 @@ pub struct MessagesRegistryServer(u32, HashMap<u32, MessageFunctionsServer>, Has
 pub struct ServerConnectionParams<'w, 's> {
     messages_registry: NetRes<'w, MessagesRegistryServer>,
     connection: NetResMut<'w, NetworkConnection<ServerConnection>>,
-    local_peer_uuid: NetRes<'w, LocalPeerUUID>,
+    local_peer_uuid: Option<NetRes<'w, LocalPeerUUID>>,
     commands: Commands<'w, 's>
 }
 
@@ -112,7 +112,8 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
 
 impl<'w, 's> ServerConnectionParams<'w, 's> {
     pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<&SendArgs>){
-        if let Some(local_peer_uuid) = &self.local_peer_uuid.0
+        if let Some(local_peer_uuid) = &self.local_peer_uuid
+            && let Some(local_peer_uuid) = &local_peer_uuid.0
         && local_peer_uuid == &peer_id
         {
             self.commands.queue(move |world: &mut World| {
@@ -136,7 +137,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
-            let local_peer_uuid = &self.local_peer_uuid.0;
+            let local_peer_uuid = if let Some(local_peer_uuid) = &self.local_peer_uuid { &local_peer_uuid.0 } else { &None };
 
             self.connection.send_message_to_all_peer(*message_id, connection_id, port_id, &message, local_peer_uuid, just_authenticated, send_args, &exceptions);
 
@@ -156,6 +157,42 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 
     pub fn get_connections(&mut self) -> &mut NetResMut<'w, NetworkConnection<ServerConnection>> {
         &mut self.connection
+    }
+
+    pub fn close_connection(&mut self, connection_id: u32) {
+        self.connection.close_connection(connection_id);
+
+        if let Some(server_connection) = self.connection.0.get(&connection_id) {
+            let amount_secondary = server_connection.get_immutable_secondary_ports().len() as u32;
+
+            self.commands.queue(move |world: &mut World| {
+                world.write_message(ConnectionClosed {
+                    connection_id
+                });
+
+                for port_id in 0..=amount_secondary {
+                    world.write_message(PortClosedManually{
+                        connection_id,
+                        port_id
+                    });
+                }
+            });
+        }
+    }
+    
+    pub fn close_port(&mut self, connection_id: u32, port_id: u32){
+        if port_id == 0 {
+            self.close_connection(connection_id);
+        }else{
+            self.connection.close_port(connection_id, port_id);
+
+            self.commands.queue(move |world: &mut World| {
+                world.write_message(PortClosedManually{
+                    connection_id,
+                    port_id
+                });
+            });
+        }
     }
 }
 
@@ -181,6 +218,42 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
 
     pub fn get_connections(&mut self) -> &mut NetResMut<'w, NetworkConnection<ClientConnection>> {
         &mut self.connection
+    }
+
+    pub fn close_connection(&mut self, connection_id: u32) {
+        self.connection.close_connection(connection_id);
+
+        if let Some(client_connection) = self.connection.0.get(&connection_id) {
+            let amount_secondary = client_connection.get_immutable_secondary_ports().len() as u32;
+
+            self.commands.queue(move |world: &mut World| {
+                world.write_message(ConnectionClosed {
+                    connection_id
+                });
+
+                for port_id in 0..=amount_secondary {
+                    world.write_message(PortClosedManually {
+                        connection_id,
+                        port_id
+                    });
+                }
+            });
+        }
+    }
+
+    pub fn close_port(&mut self, connection_id: u32, port_id: u32){
+        if port_id == 0 {
+            self.close_connection(connection_id);
+        }else{
+            self.connection.close_port(connection_id, port_id);
+
+            self.commands.queue(move |world: &mut World| {
+                world.write_message(PortClosedManually {
+                    connection_id,
+                    port_id
+                });
+            });
+        }
     }
 }
 

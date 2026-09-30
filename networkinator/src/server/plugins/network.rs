@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::time::Instant;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
 use bevy::log::{error};
-use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageWriter, Plugin};
+use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin};
 use crate::NetResMut;
 use crate::shared::plugins::messaging::MessagingPlugin;
-use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, ServerConnection};
+use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, PortClosedManually, ServerConnection};
 
 pub struct ServerNetworkPlugin;
 
@@ -219,6 +219,7 @@ pub fn check_peers_disconnected(
 
 pub fn check_port_disconnected(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
+    mut port_closed_manually: MessageReader<PortClosedManually>,
     mut server_port_disconnected: MessageWriter<ServerPortDisconnected>
 ){
     for (connection_id,server_connection) in &mut network_connection.0 {
@@ -252,10 +253,19 @@ pub fn check_port_disconnected(
             }
         }
     }
+    
+    for ev in port_closed_manually.read(){
+        server_port_disconnected.write(ServerPortDisconnected{
+            port_id: ev.port_id,
+            connection_id: ev.connection_id,
+            error: Some(Error::new(ErrorKind::Other,"Manually disconnected")),
+            was_connected: true
+        });
+    }
 }
 
 pub fn ping_ports(
-    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
+    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>
 ){
     for server_connection in &mut network_connection.0.values_mut() {
         if let (Some(main_port), network_port_shared_infos) = server_connection.get_port_split(0)

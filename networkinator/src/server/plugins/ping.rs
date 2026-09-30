@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use crate::shared::plugins::messaging::{check_messages_from_client, MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin, SendArgs, ServerConnectionParams};
-use bevy::app::App;
+use bevy::app::{App, PreUpdate};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{First, IntoScheduleConfigs, Last, MessageReader, Plugin, Resource, Time, Timer, TimerMode};
+use bevy::prelude::{First, IntoScheduleConfigs, MessageReader, Plugin, Resource, Time, Timer, TimerMode};
 use message_pro_macro::ConnectionMessage;
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
-use crate::server::plugins::network::PeersDroppedServer;
+use crate::server::plugins::network::{PeersDroppedServer, ServerPortDisconnected};
+use crate::shared::plugins::network::ConnectionClosed;
 
 pub struct ServerPing;
 
@@ -43,7 +44,7 @@ pub struct PongMessage {
 pub struct PingPorts(pub(crate) HashMap<u32, HashMap<u32,PingPortsData>>);
 
 #[derive(Resource, Default)]
-pub struct ServerNetworkStats(pub HashMap<Uuid, PeerNetworkStats>);
+pub struct ServerNetworkStats(pub HashMap<u32, HashMap<u32, HashMap<Uuid, PeerNetworkStats>>>);
 
 #[derive(SystemParam)]
 #[allow(dead_code)]
@@ -54,9 +55,34 @@ pub struct PeerPings<'w> {
 
 #[allow(dead_code)]
 impl <'w> PeerPings<'w> {
-    fn get_ping(&self, _connection_id: u32, _port_id: u32, peer_uuid: &Uuid) -> f32 {
-        if let Some(_peer_network_stats) = self.server_network_stats.0.get(peer_uuid) {
+    fn get_ping(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
+        if let Some(peer_network_connections) = self.server_network_stats.0.get(&connection_id)
+            && let Some(peer_network_ports) = peer_network_connections.get(&port_id)
+            && let Some(peer_network_stats) = peer_network_ports.get(&peer_uuid)
+        {
+            return peer_network_stats.get_ping()
+        }
 
+        0.0
+    }
+
+    fn get_smooth_ping(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
+        if let Some(peer_network_connections) = self.server_network_stats.0.get(&connection_id)
+            && let Some(peer_network_ports) = peer_network_connections.get(&port_id)
+            && let Some(peer_network_stats) = peer_network_ports.get(&peer_uuid)
+        {
+            return peer_network_stats.get_smooth_ping()
+        }
+
+        0.0
+    }
+
+    fn get_smooth_ping_no_frame_delay(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
+        if let Some(peer_network_connections) = self.server_network_stats.0.get(&connection_id)
+            && let Some(peer_network_ports) = peer_network_connections.get(&port_id)
+            && let Some(peer_network_stats) = peer_network_ports.get(&peer_uuid)
+        {
+            return peer_network_stats.get_smooth_ping_no_frame_delay(&self.time)
         }
 
         0.0
@@ -124,7 +150,7 @@ impl Plugin for ServerPing {
         app.register_message::<PingMessage>();
         app.register_message::<PongMessage>();
         app.add_systems(First,process_pong.after(check_messages_from_client));
-        app.add_systems(Last,(peer_disconnected,ping_ports).chain());
+        app.add_systems(PreUpdate,(connections_closed,ports_closed,peer_disconnected,ping_ports).chain());
     }
 }
 
@@ -150,51 +176,56 @@ fn ping_ports(
     let current_time = time.elapsed_secs_f64();
 
     for (connection_id,ports) in ping_ports.0.iter() {
-        let mut keys_to_uses: Vec<Uuid> = Vec::new();
+        for (port_id, ping_ports_data) in ports.iter() {
+            let mut keys_to_uses: Vec<Uuid> = Vec::new();
 
-        if let Some(peers_authenticated) = server_connection_params.get_connections().get_peers_authenticated_immutable(*connection_id) {
-            for uuid in peers_authenticated.keys() {
-                if let Some(peer_network_stats) = stats.0.get_mut(uuid)
-                {
-                    if !peer_network_stats.timer.tick(time.delta()).just_finished() {
-                        continue;
+            if let Some(connection_stats) = stats.0.get_mut(connection_id)
+            {
+                if let Some(port_stats) = connection_stats.get_mut(port_id){
+                    if let Some(peers_authenticated) = server_connection_params.get_connections().get_peers_authenticated_immutable(*connection_id) {
+                        for uuid in peers_authenticated.keys() {
+                            if let Some(peer_network_stats) = port_stats.get_mut(uuid) {
+                                if !peer_network_stats.timer.tick(time.delta()).just_finished() {
+                                    continue;
+                                }
+
+                                keys_to_uses.push(*uuid);
+                            }else {
+                                port_stats.insert(*uuid,PeerNetworkStats::default());
+                            }
+                        }
                     }
 
-                    keys_to_uses.push(*uuid);
+                    for uuid in keys_to_uses.iter() {
+                        if let Some(peer_network_stats) = port_stats.get_mut(uuid) {
+                            let sequence_id = peer_network_stats.next_sequence;
+                            peer_network_stats.next_sequence = peer_network_stats.next_sequence.wrapping_add(1);
+
+                            peer_network_stats.pending_pings.insert(sequence_id, current_time);
+
+                            peer_network_stats.pending_pings.retain(|_, send_time| current_time - *send_time < 5.0);
+
+                            server_connection_params.send_message(
+                                *connection_id,
+                                *port_id,
+                                PingMessage {
+                                    sequence_id,
+                                    server_timestamp: current_time,
+                                    rtt_ms: peer_network_stats.smoothed_rtt_ms
+                                },
+                                *uuid,
+                                ping_ports_data.port_args.as_ref()
+                            );
+                        }
+                    }
                 }else {
-                    let peer_network_stats = PeerNetworkStats::default();
-
-                    stats.0.insert(*uuid, peer_network_stats);
+                    connection_stats.insert(*port_id, HashMap::new());
                 }
-            }
-        }
-
-        for uuid in keys_to_uses.iter() {
-            if let Some(peer_network_stats) = stats.0.get_mut(uuid) {
-                let sequence_id = peer_network_stats.next_sequence;
-                peer_network_stats.next_sequence = peer_network_stats.next_sequence.wrapping_add(1);
-
-                peer_network_stats.pending_pings.insert(sequence_id, current_time);
-
-                peer_network_stats.pending_pings.retain(|_, send_time| current_time - *send_time < 5.0);
-
-                for (port_id,ping_ports_data) in ports.iter() {
-                    server_connection_params.send_message(
-                        *connection_id,
-                        *port_id,
-                        PingMessage {
-                            sequence_id,
-                            server_timestamp: current_time,
-                            rtt_ms: peer_network_stats.smoothed_rtt_ms
-                        },
-                        *uuid,
-                        ping_ports_data.port_args.as_ref()
-                    );
-                }
+            }else {
+                stats.0.insert(*connection_id,HashMap::new());
             }
         }
     }
-
 }
 
 fn process_pong(
@@ -207,8 +238,10 @@ fn process_pong(
     for ev in pong_message.read() {
         let pong_message = &ev.message;
 
-        if let Some(peer_network_stats) = stats.0.get_mut(&ev.peer_uuid)
-        && let Some(send_time) = peer_network_stats.pending_pings.remove(&pong_message.sequence_id)
+        if let Some(peer_network_connections) = stats.0.get_mut(&ev.connection_id)
+            && let Some(peer_network_ports) = peer_network_connections.get_mut(&ev.port_id)
+            && let Some(peer_network_stats) = peer_network_ports.get_mut(&ev.peer_uuid)
+            && let Some(send_time) = peer_network_stats.pending_pings.remove(&pong_message.sequence_id)
         {
             let rtt_seconds = now - send_time;
             let rtt_ms = (rtt_seconds * 1000.0) as f32;
@@ -216,6 +249,7 @@ fn process_pong(
             peer_network_stats.record_rtt(rtt_ms);
         }
     }
+
 }
 
 fn peer_disconnected(
@@ -223,10 +257,45 @@ fn peer_disconnected(
     mut stats: NetResMut<ServerNetworkStats>
 ){
     for ev in peers_dropped_server.read() {
-        for (_,(peer_uuid,_)) in ev.peers.iter() {
-            if let Some(peer_uuid) = peer_uuid {
-                stats.0.remove(peer_uuid);
+        if let Some(peer_network_connections) = stats.0.get_mut(&ev.connection_id)
+        && let Some(peer_network_ports) = peer_network_connections.get_mut(&ev.port_id)
+        {
+            for (_,(peer_uuid,_)) in ev.peers.iter() {
+                if let Some(peer_uuid) = peer_uuid {
+                    peer_network_ports.remove(peer_uuid);
+                }
             }
+        }
+    }
+}
+
+fn connections_closed(
+    mut connections_closed: MessageReader<ConnectionClosed>,
+    mut ping_ports: NetResMut<PingPorts>,
+    mut stats: NetResMut<ServerNetworkStats>
+){
+    for ev in connections_closed.read() {
+        ping_ports.0.remove(&ev.connection_id);
+        stats.0.remove(&ev.connection_id);
+    }
+}
+
+fn ports_closed(
+    mut server_port_disconnected: MessageReader<ServerPortDisconnected>,
+    mut ping_ports: NetResMut<PingPorts>,
+    mut stats: NetResMut<ServerNetworkStats>
+){
+    for ev in server_port_disconnected.read() {
+        if let Some(port_list) = ping_ports.0.get_mut(&ev.connection_id) {
+            port_list.remove(&ev.port_id);
+
+            if port_list.is_empty() {
+                ping_ports.0.remove(&ev.connection_id);
+            }
+        }
+
+        if let Some(peer_network_connections) = stats.0.get_mut(&ev.connection_id) {
+            peer_network_connections.remove(&ev.port_id);
         }
     }
 }

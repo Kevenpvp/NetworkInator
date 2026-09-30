@@ -147,7 +147,7 @@ fn authenticate_local_peer(
 fn authenticate_unreliable_ports(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     authenticated_sessions: NetRes<AuthenticatedSessions>,
-    local_session_uuid: NetRes<LocalSessionUUID>,
+    local_session_uuid: Option<NetRes<LocalSessionUUID>>
 ){
     let mut peers_to_authenticate: HashMap<u32, HashMap<u32, Vec<(Uuid,Uuid)>>> = HashMap::new();
 
@@ -184,7 +184,11 @@ fn authenticate_unreliable_ports(
             for (port_id,authenticate_list) in port_authenticate_list.iter() {
                 if let Some(port) = connection.get_port(*port_id) {
                     for (session_uuid,peer_id) in authenticate_list {
-                        port.authenticate_peer(*session_uuid, *peer_id, Some(*authenticated_sessions.1.get(session_uuid).unwrap()), if let Some(local_session_uuid) = &local_session_uuid.0 && local_session_uuid == session_uuid {true}else{false});
+                        if let Some(local_session_uuid) = &local_session_uuid {
+                            port.authenticate_peer(*session_uuid, *peer_id, Some(*authenticated_sessions.1.get(session_uuid).unwrap()), if let Some(local_session_uuid) = &local_session_uuid.0 && local_session_uuid == session_uuid {true}else{false});
+                        }else {
+                            port.authenticate_peer(*session_uuid, *peer_id, Some(*authenticated_sessions.1.get(session_uuid).unwrap()), false);
+                        }
                     }
                 }
             }

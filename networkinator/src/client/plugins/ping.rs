@@ -7,7 +7,7 @@ use message_pro_macro::ConnectionMessage;
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
 use crate::client::plugins::network::ClientPortDisconnected;
-use crate::shared::plugins::network::LocalSessionUUID;
+use crate::shared::plugins::network::{ConnectionClosed, LocalSessionUUID};
 
 pub struct ClientPing;
 
@@ -17,6 +17,11 @@ pub struct PingPortsData {
 
 pub struct PingsValues {
     ping_ms: f32
+}
+
+pub struct ServerTimeData {
+    pub(crate) offset_secs: f64,
+    pub(crate) is_synced: bool
 }
 
 #[derive(Serialize, Deserialize, ConnectionMessage)]
@@ -33,10 +38,7 @@ pub struct PongMessage {
 }
 
 #[derive(Resource, Default)]
-pub struct ServerTime {
-    pub(crate) offset_secs: f64,
-    pub(crate) is_synced: bool
-}
+pub struct ServerTime(pub(crate) HashMap<u32, HashMap<u32,ServerTimeData>>);
 
 #[derive(Resource, Default)]
 pub struct Pings(pub(crate) HashMap<u32, HashMap<u32,PingsValues>>);
@@ -108,7 +110,7 @@ impl PingPorts {
     }
 }
 
-impl ServerTime {
+impl ServerTimeData {
     pub fn get_server_time_now(&self, time: &Time) -> f64 {
         time.elapsed_secs_f64() + self.offset_secs
     }
@@ -124,6 +126,18 @@ impl ServerTime {
     }
 }
 
+impl ServerTime {
+    pub fn get_server_time_now(&self, connection_id: u32, port_id: u32, time: &Time) -> f64 {
+        if let Some(ports) = self.0.get(&connection_id)
+        && let Some(server_time_data) = ports.get(&port_id)
+        {
+            return  server_time_data.get_server_time_now(time)
+        }
+
+        0.0
+    }
+}
+
 impl Plugin for ClientPing {
     fn build(&self, app: &mut App) {
         app.init_resource::<Pings>();
@@ -132,7 +146,45 @@ impl Plugin for ClientPing {
         app.register_message::<PingMessage>();
         app.register_message::<PongMessage>();
         app.add_systems(First,handle_client_ping.after(check_messages_from_server));
-        app.add_systems(PreUpdate,port_disconnected);
+        app.add_systems(PreUpdate,(connection_closed,port_disconnected).chain());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_server_time_offset(
+    ping: &PingMessage,
+    server_time: &mut ServerTimeData,
+    client_now: f64,
+    ping_ports: &PingPorts,
+    connection_id: u32,
+    port_id: u32,
+    client_params: &mut ClientConnectionParams,
+    local_session_uuid: &LocalSessionUUID,
+    pings: &mut Pings
+) {
+    let one_way_delay_secs = (ping.rtt_ms / 2.0 / 1000.0) as f64;
+    let estimated_server_now = ping.server_timestamp + one_way_delay_secs;
+    let calculated_offset = estimated_server_now - client_now;
+    let send_args = if let Some(ping_list) = ping_ports.0.get(&connection_id)
+        && let Some(ping_port_data) = ping_list.get(&port_id) { ping_port_data.port_args.as_ref() } else { None };
+
+    server_time.update_offset(calculated_offset);
+
+    client_params.send_message(connection_id,port_id,PongMessage {
+        sequence_id: ping.sequence_id,
+        server_timestamp: ping.server_timestamp,
+    },local_session_uuid.0,send_args);
+
+    if let Some(ping_list) = pings.0.get_mut(&connection_id) {
+        if let Some(pings_values) = ping_list.get_mut(&port_id) {
+            pings_values.ping_ms = ping.rtt_ms;
+        }else {
+            ping_list.insert(port_id,PingsValues{
+                ping_ms: ping.rtt_ms,
+            });
+        }
+    }else {
+        pings.0.insert(connection_id,HashMap::from([(port_id, PingsValues{ping_ms: ping.rtt_ms})]));
     }
 }
 
@@ -148,37 +200,40 @@ pub fn handle_client_ping(
     let client_now = time.elapsed_secs_f64();
 
     for ev in ping_reader.read() {
-        let ping = &ev.message;
-        let one_way_delay_secs = (ping.rtt_ms / 2.0 / 1000.0) as f64;
-        let estimated_server_now = ping.server_timestamp + one_way_delay_secs;
-        let calculated_offset = estimated_server_now - client_now;
-        let send_args = if let Some(ping_list) = ping_ports.0.get(&ev.connection_id)
-            && let Some(ping_port_data) = ping_list.get(&ev.port_id) { ping_port_data.port_args.as_ref() } else { None };
-
-        server_time.update_offset(calculated_offset);
-
-        client_params.send_message(ev.connection_id,ev.port_id,PongMessage {
-            sequence_id: ping.sequence_id,
-            server_timestamp: ping.server_timestamp,
-        },local_session_uuid.0,send_args);
-
-        if let Some(ping_list) = pings.0.get_mut(&ev.connection_id) {
-            if let Some(pings_values) = ping_list.get_mut(&ev.port_id) {
-                pings_values.ping_ms = ping.rtt_ms;
+        if let Some(server_time_connection) = server_time.0.get_mut(&ev.connection_id)
+        {
+            if let Some(mut server_time) = server_time_connection.get_mut(&ev.port_id) {
+                apply_server_time_offset(&ev.message,&mut server_time, client_now, &ping_ports, ev.connection_id, ev.port_id, &mut client_params, &local_session_uuid, &mut pings);
             }else {
-                ping_list.insert(ev.port_id,PingsValues{
-                    ping_ms: ping.rtt_ms,
-                });
+                let mut server_time_data = ServerTimeData{
+                    offset_secs: 0.0,
+                    is_synced: false,
+                };
+
+                apply_server_time_offset(&ev.message,&mut server_time_data, client_now, &ping_ports, ev.connection_id, ev.port_id, &mut client_params, &local_session_uuid, &mut pings);
+
+                server_time_connection.insert(ev.port_id, server_time_data);
             }
         }else {
-            pings.0.insert(ev.connection_id,HashMap::from([(ev.port_id, PingsValues{ping_ms: ping.rtt_ms})]));
+            let mut server_time_data = ServerTimeData{
+                offset_secs: 0.0,
+                is_synced: false,
+            };
+
+            apply_server_time_offset(&ev.message,&mut server_time_data, client_now, &ping_ports, ev.connection_id, ev.port_id, &mut client_params, &local_session_uuid, &mut pings);
+
+            server_time.0.insert(ev.connection_id,HashMap::from([
+                (ev.port_id,server_time_data)
+            ]));
         }
     }
 }
 
 pub fn port_disconnected(
     mut client_port_disconnected: MessageReader<ClientPortDisconnected>,
-    mut pings: NetResMut<Pings>
+    mut pings: NetResMut<Pings>,
+    mut ping_ports: NetResMut<PingPorts>,
+    mut server_time: NetResMut<ServerTime>
 ){
     for ev in client_port_disconnected.read() {
         if let Some(ping_list) = pings.0.get_mut(&ev.connection_id) {
@@ -188,5 +243,34 @@ pub fn port_disconnected(
                 pings.0.remove(&ev.connection_id);
             }
         }
+
+        if let Some(ping_ports_list) = ping_ports.0.get_mut(&ev.port_id) {
+            ping_ports_list.remove(&ev.port_id);
+
+            if ping_ports_list.is_empty() {
+                ping_ports.0.remove(&ev.connection_id);
+            }
+        }
+
+        if let Some(server_time_ports) = server_time.0.get_mut(&ev.connection_id) {
+            server_time_ports.remove(&ev.port_id);
+
+            if server_time_ports.is_empty() {
+                server_time.0.remove(&ev.connection_id);
+            }
+        }
+    }
+}
+
+pub fn connection_closed(
+    mut connections_closed: MessageReader<ConnectionClosed>,
+    mut pings: NetResMut<Pings>,
+    mut ping_ports: NetResMut<PingPorts>,
+    mut server_time: NetResMut<ServerTime>
+){
+    for ev in connections_closed.read() {
+        pings.0.remove(&ev.connection_id);
+        ping_ports.0.remove(&ev.connection_id);
+        server_time.0.remove(&ev.connection_id);
     }
 }
