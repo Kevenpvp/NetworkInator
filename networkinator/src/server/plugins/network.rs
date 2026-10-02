@@ -7,7 +7,7 @@ use bevy::log::{error};
 use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin};
 use crate::NetResMut;
 use crate::shared::plugins::messaging::MessagingPlugin;
-use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, PortClosedManually, ServerConnection};
+use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
 
 pub struct ServerNetworkPlugin;
 
@@ -22,7 +22,8 @@ pub struct ServerPortDisconnected{
     pub port_id: u32,
     pub connection_id: u32,
     pub error: Option<Error>,
-    pub was_connected: bool
+    pub was_connected: bool,
+    pub manually_closed: bool
 }
 
 #[derive(Message)]
@@ -36,7 +37,7 @@ pub struct AnonymousPeersAcceptedOnPort{
 pub struct PeersDroppedServer{
     pub port_id: u32,
     pub connection_id: u32,
-    pub peers: HashMap<Uuid,(Option<Uuid>,Error)>
+    pub peers: HashMap<Uuid,(Option<Uuid>,Error,bool)>
 }
 
 impl Plugin for ServerNetworkPlugin {
@@ -180,7 +181,8 @@ pub fn listen_peers(
 
 pub fn check_peers_disconnected(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut peers_dropped_server: MessageWriter<PeersDroppedServer>
+    mut peers_dropped_server: MessageWriter<PeersDroppedServer>,
+    mut peers_manually_dropped: MessageReader<PeersManuallyDropped>
 ){
     for (connection_id,server_connection) in &mut network_connection.0 {
         if let Some(main_port) = server_connection.get_port(0) {
@@ -215,6 +217,22 @@ pub fn check_peers_disconnected(
             }
         }
     }
+
+    for ev in peers_manually_dropped.read() {
+        let peers: HashMap<Uuid, (Option<Uuid>, Error, bool)> = ev.peers
+            .iter()
+            .map(|(k, (uuid, err, b))| {
+                let new_err = Error::new(err.kind(), err.to_string());
+                (*k, (*uuid, new_err, *b))
+            })
+            .collect();
+
+        peers_dropped_server.write(PeersDroppedServer{
+            port_id: ev.port_id,
+            connection_id: ev.connection_id,
+            peers,
+        });
+    }
 }
 
 pub fn check_port_disconnected(
@@ -231,7 +249,8 @@ pub fn check_port_disconnected(
                     port_id: 0,
                     connection_id: *connection_id,
                     error,
-                    was_connected
+                    was_connected,
+                    manually_closed: false
                 });
             }
         }
@@ -247,7 +266,8 @@ pub fn check_port_disconnected(
                         port_id,
                         connection_id: *connection_id,
                         error,
-                        was_connected
+                        was_connected,
+                        manually_closed: false
                     });
                 }
             }
@@ -259,7 +279,8 @@ pub fn check_port_disconnected(
             port_id: ev.port_id,
             connection_id: ev.connection_id,
             error: Some(Error::new(ErrorKind::Other,"Manually disconnected")),
-            was_connected: true
+            was_connected: ev.was_started,
+            manually_closed: true
         });
     }
 }

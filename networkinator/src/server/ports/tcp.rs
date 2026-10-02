@@ -13,7 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
-use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
+use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, PortStatus, ServerPortTrait, ServerSettingsPort};
 use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
 pub struct TcpServerSettings{
@@ -50,8 +50,8 @@ pub struct TcpServerPort{
     peers_connected: HashMap<Uuid,PeerConnected>,
     peers_authenticated: HashMap<Uuid,Uuid>,
 
-    tpc_listener_receiver: UnboundedReceiver<Arc<TcpListener>>,
-    tcp_listener_sender: Arc<UnboundedSender<Arc<TcpListener>>>,
+    tpc_listener_receiver: UnboundedReceiver<Option<Arc<TcpListener>>>,
+    tcp_listener_sender: Arc<UnboundedSender<Option<Arc<TcpListener>>>>,
 
     connecting_downed_receiver: UnboundedReceiver<(Error,bool)>,
     connecting_downed_sender: Arc<UnboundedSender<(Error,bool)>>,
@@ -59,8 +59,8 @@ pub struct TcpServerPort{
     peer_connected_receiver: UnboundedReceiver<(TcpStream, SocketAddr, Option<OwnedSemaphorePermit>)>,
     peer_connected_sender: Arc<UnboundedSender<(TcpStream, SocketAddr, Option<OwnedSemaphorePermit>)>>,
 
-    peer_disconnected_receiver: UnboundedReceiver<(Uuid,Option<Uuid>,Error)>,
-    peer_disconnected_sender: Arc<UnboundedSender<(Uuid,Option<Uuid>,Error)>>,
+    peer_disconnected_receiver: UnboundedReceiver<(Uuid,Option<Uuid>,Error,bool)>,
+    peer_disconnected_sender: Arc<UnboundedSender<(Uuid,Option<Uuid>,Error,bool)>>,
 }
 
 impl TcpServerSettings {
@@ -110,10 +110,10 @@ impl Default for TcpServerSettings {
 
 impl ServerSettingsPort for TcpServerSettings{
     fn create_port(self: Box<Self>) -> Box<dyn ServerPortTrait>{
-        let (tcp_listener_sender,tpc_listener_receiver) = unbounded_channel::<Arc<TcpListener>>();
+        let (tcp_listener_sender,tpc_listener_receiver) = unbounded_channel::<Option<Arc<TcpListener>>>();
         let (connecting_downed_sender,connecting_downed_receiver) = unbounded_channel::<(Error,bool)>();
         let (peer_connected_sender,peer_connected_receiver) = unbounded_channel::<(TcpStream, SocketAddr, Option<OwnedSemaphorePermit>)>();
-        let (peer_disconnected_sender,peer_disconnected_receiver) = unbounded_channel::<(Uuid,Option<Uuid>,Error)>();
+        let (peer_disconnected_sender,peer_disconnected_receiver) = unbounded_channel::<(Uuid,Option<Uuid>,Error,bool)>();
 
         Box::new(TcpServerPort{
             tcp_listener: None,
@@ -162,7 +162,7 @@ impl ServerPortTrait for TcpServerPort{
 
             let first_started = self.first_started;
             let (start_accepting_connections_sender, mut start_accepting_connections_receiver) = unbounded_channel::<Arc<TcpListener>>();
-            let mut tcp_listener: Option<Arc<TcpListener>> = None;
+            let mut tcp_listener: Option<Arc<TcpListener>> = if let Some(tcp_listener_current) = &self.tcp_listener { Some(Arc::clone(tcp_listener_current)) } else { None };
             let semaphore: Option<Arc<Semaphore>> = if main_port && default_network_port_shared_infos.get_semaphore().is_some() {
                 if let Some(semaphore) = &default_network_port_shared_infos.get_semaphore() {
                     Some(Arc::clone(semaphore))
@@ -174,41 +174,43 @@ impl ServerPortTrait for TcpServerPort{
             };
 
             runtime.spawn(async move {
-                let tcp_listener_future = TcpListener::bind(address);
+                if tcp_listener.is_none() {
+                    let tcp_listener_future = TcpListener::bind(address);
 
-                tokio::spawn(async move {
-                    match tcp_listener_future.await {
-                        Ok(tcp_listener) => {
-                            let tcp_listener_arc = Arc::new(tcp_listener);
+                    tokio::spawn(async move {
+                        match tcp_listener_future.await {
+                            Ok(tcp_listener) => {
+                                let tcp_listener_arc = Arc::new(tcp_listener);
 
-                            if let Err(send_error) = start_accepting_connections_sender.send(Arc::clone(&tcp_listener_arc)) {
-                                warn!("Failed to send TCP port connected receiver, error: {}", send_error);
+                                if let Err(send_error) = start_accepting_connections_sender.send(Arc::clone(&tcp_listener_arc)) {
+                                    warn!("Failed to send TCP port connected receiver, error: {}", send_error);
+                                }
+
+                                if let Err(send_error) = tcp_listener_sender.send(Some(Arc::clone(&tcp_listener_arc))) {
+                                    warn!("Failed to send TCP port connected receiver, error: {}", send_error);
+                                }
                             }
 
-                            if let Err(send_error) = tcp_listener_sender.send(Arc::clone(&tcp_listener_arc)) {
-                                warn!("Failed to send TCP port connected receiver, error: {}", send_error);
-                            }
+                            Err(e) => {
+                                if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
+                                    warn!("Failed to send TCP port failed to connect, error: {}", send_error);
+                                }
+                            },
                         }
+                    });
 
-                        Err(e) => {
-                            if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
-                                warn!("Failed to send TCP port failed to connect, error: {}", send_error);
+                    loop {
+                        match start_accepting_connections_receiver.recv().await {
+                            None => {
+                                break;
                             }
-                        },
-                    }
-                });
-
-                loop {
-                    match start_accepting_connections_receiver.recv().await {
-                        None => {
-                            break;
-                        }
-                        Some(tcp_listener_received) => {
-                            tcp_listener = Some(tcp_listener_received);
+                            Some(tcp_listener_received) => {
+                                tcp_listener = Some(tcp_listener_received);
+                            }
                         }
                     }
                 }
-
+                
                 if tcp_listener.is_some() && let Some(tcp_listener) = &tcp_listener {
                     loop {
                         match tcp_listener.accept().await {
@@ -263,7 +265,9 @@ impl ServerPortTrait for TcpServerPort{
                     self.starting = false;
                     self.first_started = true;
 
-                    self.tcp_listener = Some(tcp_listener);
+                    if let Some(tcp_listener) = tcp_listener {
+                        self.tcp_listener = Some(tcp_listener);
+                    }
 
                     (true,true)
                 },
@@ -279,11 +283,13 @@ impl ServerPortTrait for TcpServerPort{
             Ok((error, first_started)) => {
                 self.started = false;
                 self.starting = false;
-
-                if let Some(tcp_listener) = self.tcp_listener.take() {
-                    drop(tcp_listener);
+                
+                for (season_uuid, peers_connected) in self.peers_connected.drain() {
+                    if let Err(send_error) = self.peer_disconnected_sender.send((season_uuid,peers_connected.peer_id,Error::new(ErrorKind::Other,"Server Disconnected"),true)) {
+                        warn!("Failed to send peer disconnected due server, error: {}", send_error);
+                    }
                 }
-
+                
                 (true,Some(error),first_started)
             },
             Err(_) => {
@@ -389,6 +395,28 @@ impl ServerPortTrait for TcpServerPort{
         annoy_anonymous_sessions
     }
 
+    fn get_all_sessions(&self) -> Vec<(Uuid, Option<Uuid>)> {
+        let mut all_sessions: Vec<(Uuid,Option<Uuid>)> = Vec::new();
+
+        for (session_uuid,peer_connected) in self.peers_connected.iter() {
+            if let Some(peer_id) = peer_connected.peer_id {
+                all_sessions.push((*session_uuid,Some(peer_id)));
+            }else { 
+                all_sessions.push((*session_uuid,None));
+            }
+        }
+        
+        all_sessions
+    }
+
+    fn get_port_status(&self) -> PortStatus {
+        PortStatus {
+            started: self.started,
+            first_started: self.first_started,
+            starting: self.starting
+        }
+    }
+
     fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
         if let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
             && let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
@@ -441,10 +469,10 @@ impl ServerPortTrait for TcpServerPort{
         }
     }
 
-    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error)> {
-        let mut peers: HashMap<Uuid,(Option<Uuid>, Error)> = HashMap::new();
+    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error, bool)> {
+        let mut peers: HashMap<Uuid,(Option<Uuid>, Error, bool)> = HashMap::new();
 
-        while let Ok((session_uuid,peer_id,error)) = self.peer_disconnected_receiver.try_recv() {
+        while let Ok((session_uuid,peer_id,error,server_disconnected)) = self.peer_disconnected_receiver.try_recv() {
             if let Some(peer_connected) = self.peers_connected.remove(&session_uuid){
                 drop(peer_connected);
             }
@@ -453,7 +481,7 @@ impl ServerPortTrait for TcpServerPort{
                 self.peers_authenticated.remove(&peer_id);
             }
 
-            peers.insert(session_uuid, (peer_id, error));
+            peers.insert(session_uuid, (peer_id, error,server_disconnected));
         }
 
         let now = Instant::now();
@@ -464,7 +492,7 @@ impl ServerPortTrait for TcpServerPort{
             }
 
             if now.duration_since(peer_connected.non_authenticated_instant) >= Duration::from_secs(120) {
-                peers.insert(*session_uuid, (peer_connected.peer_id, Error::new(ErrorKind::TimedOut, "Didnt authenticated in time")));
+                peers.insert(*session_uuid, (peer_connected.peer_id, Error::new(ErrorKind::TimedOut, "Didnt authenticated in time"), false));
                 return false
             };
 
@@ -519,7 +547,7 @@ impl ServerPortTrait for TcpServerPort{
 
             match peer_connected.owned_read_half.try_read(&mut temp_buf) {
                 Ok(0) => {
-                    if let Err(send_error) = self.peer_disconnected_sender.send((*session_uuid, peer_connected.peer_id, Error::from(ErrorKind::TimedOut))) {
+                    if let Err(send_error) = self.peer_disconnected_sender.send((*session_uuid, peer_connected.peer_id, Error::from(ErrorKind::TimedOut), false)) {
                         warn!("Failed to send TCP peer port connection_aborted, error: {}", send_error);
                         continue;
                     }
@@ -531,7 +559,7 @@ impl ServerPortTrait for TcpServerPort{
                     continue;
                 }
                 Err(e) => {
-                    if let Err(send_error) = self.peer_disconnected_sender.send((*session_uuid,peer_connected.peer_id,e)) {
+                    if let Err(send_error) = self.peer_disconnected_sender.send((*session_uuid,peer_connected.peer_id,e, false)) {
                         warn!("Failed to send TCP peer port connection_aborted, error: {}", send_error);
                         continue;
                     }
@@ -583,13 +611,19 @@ impl ServerPortTrait for TcpServerPort{
         self.peers_authenticated.contains_key(peer_uuid)
     }
 
-    fn disconnect_peer_or_session(&mut self, uuid: &Uuid) {
+    fn disconnect_peer_or_session(&mut self, uuid: &Uuid) -> Option<(Uuid,Option<Uuid>)> {
         if let Some(session_uuid) = self.peers_authenticated.get(uuid) {
             if let Some(peer_connected) = self.peers_connected.remove(session_uuid) {
+                let peer_id = peer_connected.peer_id;
                 drop(peer_connected);
+                return Some((*session_uuid, peer_id))
             }
         }else if let Some(peer_connected) = self.peers_connected.remove(uuid) {
+            let peer_id = peer_connected.peer_id;
             drop(peer_connected);
+            return Some((*uuid, peer_id))
         }
+        
+        None
     }
 }

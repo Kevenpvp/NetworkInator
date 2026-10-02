@@ -47,7 +47,31 @@ pub struct ConnectionClosed {
 #[derive(Message)]
 pub struct PortClosedManually {
     pub connection_id: u32,
+    pub port_id: u32,
+    pub was_started: bool
+}
+
+#[derive(Message)]
+pub struct PeersManuallyDropped {
+    pub peers: HashMap<Uuid,(Option<Uuid>,Error,bool)>,
+    pub connection_id: u32,
     pub port_id: u32
+}
+
+#[derive(Message)]
+pub struct BytesReceivedFromPeer{
+    pub peer_season_uuid: Uuid,
+    pub peer_id: Option<Uuid>,
+    pub connection_id: u32,
+    pub port_id: u32,
+    pub bytes_length: usize
+}
+
+#[derive(Message)]
+pub struct BytesReceivedFromServer{
+    pub connection_id: u32,
+    pub port_id: u32,
+    pub bytes_length: usize
 }
 
 #[allow(dead_code)]
@@ -56,6 +80,11 @@ pub struct ConnectedInfos {
     peer_uuid: Option<Uuid>
 }
 
+pub struct PortStatus{
+    pub started: bool,
+    pub first_started: bool,
+    pub starting: bool
+}
 
 #[cfg(target_arch = "wasm32")]
 pub trait ServerPortTrait: Send {
@@ -70,6 +99,8 @@ pub trait ServerPortTrait: Send {
     fn is_main_port(&self) -> bool;
     fn get_anonymous_sessions(&self) -> Vec<Uuid>;
     fn get_authenticated_sessions(&self) -> Vec<(Uuid,Uuid)>;
+    fn get_all_sessions(&self) -> Vec<(Uuid,Option<Uuid>)>;
+    fn get_port_status(&self) -> PortStatus;
 
     #[allow(clippy::too_many_arguments)]
     fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: Option<&SendArgs>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
@@ -80,11 +111,11 @@ pub trait ServerPortTrait: Send {
         from_bytes::<MessageInfos>(&vec).ok()
     }
 
-    fn get_port_infos(&mut self) -> Option<&dyn Any> {
+    fn get_port_infos(&self) -> Option<Box<dyn Any>> {
         None
     }
 
-    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error)> {
+    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error, bool)> {
         HashMap::new()
     }
 
@@ -123,8 +154,8 @@ pub trait ServerPortTrait: Send {
         None
     }
 
-    fn disconnect_peer_or_session(&mut self, _uuid: &Uuid) {
-
+    fn disconnect_peer_or_session(&mut self, _uuid: &Uuid) -> Option<(Uuid,Option<Uuid>)> {
+        None
     }
 
     fn ping(&mut self, _session_uuid: &Uuid, _network_port_shared_infos: &dyn Any) {
@@ -149,6 +180,8 @@ pub trait ServerPortTrait: Send + Sync{
     fn is_main_port(&self) -> bool;
     fn get_anonymous_sessions(&self) -> Vec<Uuid>;
     fn get_authenticated_sessions(&self) -> Vec<(Uuid,Uuid)>;
+    fn get_all_sessions(&self) -> Vec<(Uuid,Option<Uuid>)>;
+    fn get_port_status(&self) -> PortStatus;
 
     #[allow(clippy::too_many_arguments)]
     fn send_message_to_all_peer(&mut self, _message_id: u32, _local_peer_uuid_option: &Option<Uuid>, _network_port_shared_infos: &dyn Any, _message: &dyn MessageTrait, _send_args: Option<&SendArgs>, _just_authenticated: bool, _exceptions: &Vec<Uuid>) {
@@ -159,14 +192,14 @@ pub trait ServerPortTrait: Send + Sync{
         from_bytes::<MessageInfos>(&vec).ok()
     }
 
-    fn get_port_infos(&mut self) -> Option<&dyn Any> {
+    fn get_port_infos(&self) -> Option<Box<dyn Any>> {
         None
     }
     
-    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error)> {
+    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error, bool)> {
         HashMap::new()
     }
-    
+
     fn peers_connected(&mut self) -> Vec<Uuid> {
         Vec::new()
     }
@@ -202,8 +235,8 @@ pub trait ServerPortTrait: Send + Sync{
         None
     }
 
-    fn disconnect_peer_or_session(&mut self, _uuid: &Uuid) {
-
+    fn disconnect_peer_or_session(&mut self, _uuid: &Uuid) -> Option<(Uuid,Option<Uuid>)> {
+        None
     }
 
     fn ping(&mut self, _session_uuid: &Uuid, _network_port_shared_infos: &dyn Any) {
@@ -226,12 +259,13 @@ pub trait ClientPortTrait: Send {
     fn as_main_port(&mut self) -> bool;
     fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>);
     fn is_main_port(&self) -> bool;
+    fn get_port_status(&self) -> PortStatus;
 
     fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
         from_bytes::<MessageInfos>(&vec).ok()
     }
 
-    fn get_port_infos(&mut self) -> Option<&dyn Any> {
+    fn get_port_infos(&self) -> Option<Box<dyn Any>> {
         None
     }
 
@@ -271,12 +305,13 @@ pub trait ClientPortTrait: Send + Sync{
     fn as_main_port(&mut self) -> bool;
     fn send_message_for_server(&mut self, message_id: u32, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>);
     fn is_main_port(&self) -> bool;
+    fn get_port_status(&self) -> PortStatus;
 
     fn deserialize_message_infos(&self, vec: Vec<u8>) -> Option<MessageInfos> {
         from_bytes::<MessageInfos>(&vec).ok()
     }
 
-    fn get_port_infos(&mut self) -> Option<&dyn Any> {
+    fn get_port_infos(&self) -> Option<Box<dyn Any>> {
         None
     }
 
@@ -377,13 +412,18 @@ impl Plugin for NetworkPlugin {
             app.init_resource::<NetworkConnection<ClientConnection>>();
 
             if is_local_server {
+                app.add_message::<PeersManuallyDropped>();
+                app.add_message::<BytesReceivedFromPeer>();
                 #[cfg(not(target_arch = "wasm32"))]
                 app.init_resource::<NetworkConnection<ServerConnection>>();
             }
 
+            app.add_message::<BytesReceivedFromServer>();
             app.init_resource::<LocalSessionUUID>();
             app.init_resource::<LocalPeerUUID>();
         }else if is_dedicated_server {
+            app.add_message::<PeersManuallyDropped>();
+            app.add_message::<BytesReceivedFromPeer>();
             #[cfg(not(target_arch = "wasm32"))]
             app.init_resource::<NetworkConnection<ServerConnection>>();
         }
@@ -543,14 +583,21 @@ impl ServerConnection {
         self.authentication_connection
     }
 
-    pub fn disconnect_peer_or_session(&mut self, uuid: &Uuid){
+    pub fn disconnect_peer_or_session(&mut self, uuid: &Uuid) -> HashMap<u32, (Uuid,Option<Uuid>)> {
         let ports_amount = self.get_ports_amount();
+        let mut disconnected_from_ports: HashMap<u32, (Uuid,Option<Uuid>)> = HashMap::new();
 
         for port_id in 0..=ports_amount {
             if let Some(port) = self.get_port(port_id) {
-                port.disconnect_peer_or_session(uuid);
+                let value_dropped = port.disconnect_peer_or_session(uuid);
+                
+                if let Some(value_dropped) = value_dropped {
+                    disconnected_from_ports.insert(port_id, value_dropped);
+                }
             }
         }
+
+        disconnected_from_ports
     }
 
     pub fn open_secondary_port(&mut self, settings: Box<dyn ServerSettingsPort>){
@@ -760,10 +807,12 @@ impl NetworkConnection<ServerConnection> {
         }
     }
 
-    pub fn disconnect_peer_or_session(&mut self, connection_id: u32, uuid: &Uuid) {
+    pub fn disconnect_peer_or_session(&mut self, connection_id: u32, uuid: &Uuid) -> HashMap<u32, (Uuid,Option<Uuid>)> {
         if let Some(connection) = self.0.get_mut(&connection_id){
-            connection.disconnect_peer_or_session(uuid);
+            return connection.disconnect_peer_or_session(uuid);
         }
+        
+        HashMap::new()
     }
 
     pub fn get_peers_connected(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,ConnectedInfos>> {

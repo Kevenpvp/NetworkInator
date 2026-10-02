@@ -13,7 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use send_wrapper::SendWrapper;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
-use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, PortReliability};
+use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, PortReliability, PortStatus};
 
 pub struct WasmWebSocketClientSettings{
     url: String,
@@ -290,6 +290,14 @@ impl ClientPortTrait for WasmWebSocketClientPort{
 
     fn is_main_port(&self) -> bool {
         self.main_port
+    }
+
+    fn get_port_status(&self) -> PortStatus {
+        PortStatus {
+            started: self.started,
+            first_started: self.first_started,
+            starting: self.starting
+        }
     }
 
     fn listen_to_server(&mut self, _network_port_shared_infos: &dyn Any) {

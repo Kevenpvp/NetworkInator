@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use std::any::Any;
 use std::collections::HashMap;
-use std::io::{Error};
+use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,7 +10,7 @@ use bevy::log::warn;
 use tokio::net::{UdpSocket};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
-use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, ServerPortTrait, ServerSettingsPort};
+use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, PortStatus, ServerPortTrait, ServerSettingsPort};
 use crate::shared::port_systems::inject_extract_uuid::extract_uuid;
 
 pub struct UdpServerSettings {
@@ -40,8 +40,8 @@ pub struct UdpServerPort {
     peers_connected: HashMap<Uuid, PeerConnected>,
     peer_uuid_to_session_uuid: HashMap<Uuid,Uuid>,
 
-    udp_socket_receiver: UnboundedReceiver<Arc<UdpSocket>>,
-    udp_socket_sender: Arc<UnboundedSender<Arc<UdpSocket>>>,
+    udp_socket_receiver: UnboundedReceiver<Option<Arc<UdpSocket>>>,
+    udp_socket_sender: Arc<UnboundedSender<Option<Arc<UdpSocket>>>>,
 
     connecting_downed_receiver: UnboundedReceiver<(Error,bool)>,
     connecting_downed_sender: Arc<UnboundedSender<(Error,bool)>>,
@@ -83,7 +83,7 @@ impl Default for UdpServerSettings {
 
 impl ServerSettingsPort for UdpServerSettings{
     fn create_port(self: Box<Self>) -> Box<dyn ServerPortTrait>{
-        let (udp_socket_sender,udp_socket_receiver) = unbounded_channel::<Arc<UdpSocket>>();
+        let (udp_socket_sender,udp_socket_receiver) = unbounded_channel::<Option<Arc<UdpSocket>>>();
         let (connecting_downed_sender,connecting_downed_receiver) = unbounded_channel::<(Error,bool)>();
         let (peer_message_sender,peer_message_receiver) = unbounded_channel::<(Vec<u8>, Uuid, SocketAddr)>();
 
@@ -127,35 +127,38 @@ impl ServerPortTrait for UdpServerPort {
             let peer_message_sender = Arc::clone(&self.peer_message_sender);
             let first_started = self.first_started;
             let buffer_size = settings.buffer_size;
+            let udp_socket_actual = if let Some(udp_socket) = &self.udp_socket { Some(Arc::clone(udp_socket)) } else { None };
 
             runtime.spawn(async move {
-                let udp_socket_future = UdpSocket::bind(address);
+                let was_empty = udp_socket_actual.is_none();
 
-                let udp_socket: UdpSocket = match udp_socket_future.await {
-                    Ok(mut udp_socket_new) => {
-                        udp_socket_new = match hook_udp_socket {
-                            None => {
-                                udp_socket_new
-                            }
-                            Some(hook_udp_socket) => {
-                                hook_udp_socket(udp_socket_new)
-                            }
-                        };
+                let udp_socket = if let Some(udp_socket_actual) = udp_socket_actual { udp_socket_actual } else {
+                    let udp_socket_future = UdpSocket::bind(address);
 
-                        udp_socket_new
-                    }
-                    Err(e) => {
-                        if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
-                            warn!("Failed to send UDP port failed to connect, error: {}", send_error);
+                     match udp_socket_future.await {
+                        Ok(mut udp_socket_new) => {
+                            udp_socket_new = match hook_udp_socket {
+                                None => {
+                                    udp_socket_new
+                                }
+                                Some(hook_udp_socket) => {
+                                    hook_udp_socket(udp_socket_new)
+                                }
+                            };
+
+                            Arc::new(udp_socket_new)
                         }
+                        Err(e) => {
+                            if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
+                                warn!("Failed to send UDP port failed to connect, error: {}", send_error);
+                            }
 
-                        return;
+                            return;
+                        }
                     }
                 };
 
-                let udp_socket = Arc::new(udp_socket);
-
-                if let Err(send_error) = udp_socket_sender.send(Arc::clone(&udp_socket)) {
+                if let Err(send_error) = udp_socket_sender.send(if was_empty { Some(Arc::clone(&udp_socket)) } else { None } ) {
                     warn!("Failed to send UDP port connected receiver, error: {}", send_error);
                     return;
                 }
@@ -182,12 +185,12 @@ impl ServerPortTrait for UdpServerPort {
                                 }
                             };
                         }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                             continue;
                         }
-                        Err(_) => {
-                            if let Err(send_error) = udp_socket_sender.send(Arc::clone(&udp_socket)) {
-                                warn!("Failed to send UDP port connected receiver, error: {}", send_error);
+                        Err(e) => {
+                            if let Err(send_error) = connecting_downed_sender.send((e,first_started)) {
+                                warn!("Failed to send UDP port disconnected, error: {}", send_error);
                                 return;
                             }
                         }
@@ -213,7 +216,9 @@ impl ServerPortTrait for UdpServerPort {
                     self.starting = false;
                     self.first_started = true;
 
-                    self.udp_socket = Some(udp_socket);
+                    if let Some(udp_socket) = udp_socket {
+                        self.udp_socket = Some(udp_socket);
+                    }
 
                     (true,true)
                 },
@@ -229,10 +234,6 @@ impl ServerPortTrait for UdpServerPort {
             Ok((error, first_started)) => {
                 self.started = false;
                 self.starting = false;
-
-                if let Some(udp_socket) = self.udp_socket.take() {
-                    drop(udp_socket);
-                }
 
                 (true,Some(error),first_started)
             },
@@ -331,6 +332,28 @@ impl ServerPortTrait for UdpServerPort {
         annoy_anonymous_sessions
     }
 
+    fn get_all_sessions(&self) -> Vec<(Uuid, Option<Uuid>)> {
+        let mut all_sessions: Vec<(Uuid,Option<Uuid>)> = Vec::new();
+
+        for (session_uuid,peer_connected) in self.peers_connected.iter() {
+            if let Some(peer_id) = peer_connected.peer_id {
+                all_sessions.push((*session_uuid,Some(peer_id)));
+            }else {
+                all_sessions.push((*session_uuid,None));
+            }
+        }
+
+        all_sessions
+    }
+
+    fn get_port_status(&self) -> PortStatus {
+        PortStatus {
+            started: self.started,
+            first_started: self.first_started,
+            starting: self.starting
+        }
+    }
+
     fn send_message_to_all_peer(&mut self, message_id: u32, local_peer_uuid_option: &Option<Uuid>, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>, just_authenticated: bool, exceptions: &Vec<Uuid>) {
         if let Some(udp_socket) = &self.udp_socket && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
             && let Some(runtime) = &default_network_port_shared_infos.get_runtime() {
@@ -368,24 +391,27 @@ impl ServerPortTrait for UdpServerPort {
         }
     }
 
-    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error)> {
+    fn get_peers_disconnected(&mut self) -> HashMap<Uuid,(Option<Uuid>, Error, bool)> {
         let now = Instant::now();
+        let mut disconnected_list: HashMap<Uuid,(Option<Uuid>, Error, bool)> = HashMap::new();
 
-        self.peers_connected.retain(|_session_uuid, peer_connected| {
+        self.peers_connected.retain(|session_uuid, peer_connected| {
             if peer_connected.peer_id.is_none()
             && now.duration_since(peer_connected.non_authenticated_instant) >= Duration::from_secs(120)
             {
+                disconnected_list.insert(*session_uuid,(peer_connected.peer_id, Error::from(ErrorKind::TimedOut), false));
                 return false
             }
 
             if now.duration_since(peer_connected.last_pong_instant) >= Duration::from_secs(120) {
+                disconnected_list.insert(*session_uuid,(peer_connected.peer_id, Error::from(ErrorKind::TimedOut), false));
                 return false
             }
 
             true
         });
 
-        HashMap::new()
+        disconnected_list
     }
 
     fn authenticate_peer(&mut self, current_session_uuid: Uuid, new_peer_id: Uuid, new_session_uuid: Option<Uuid>, is_local: bool) {
@@ -394,7 +420,7 @@ impl ServerPortTrait for UdpServerPort {
 
             if let Some(new_session_uuid) = new_session_uuid {
                 let mut peer_connected = self.peers_connected.remove(&current_session_uuid).unwrap();
-                
+
                 peer_connected.is_local = is_local;
 
                 self.peers_connected.insert(new_session_uuid, peer_connected);
@@ -411,6 +437,16 @@ impl ServerPortTrait for UdpServerPort {
         }
 
         false
+    }
+
+    fn disconnect_peer_or_session(&mut self, uuid: &Uuid) -> Option<(Uuid,Option<Uuid>)> {
+        if let Some(peer_connected) = self.peers_connected.remove(uuid) {
+            let peer_id = peer_connected.peer_id;
+            drop(peer_connected);
+            return Some((*uuid, peer_id))
+        }
+
+        None
     }
 
     fn ping(&mut self, session_uuid: &Uuid, network_port_shared_infos: &dyn Any) {

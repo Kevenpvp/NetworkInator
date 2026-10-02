@@ -260,7 +260,7 @@ fn peer_disconnected(
         if let Some(peer_network_connections) = stats.0.get_mut(&ev.connection_id)
         && let Some(peer_network_ports) = peer_network_connections.get_mut(&ev.port_id)
         {
-            for (_,(peer_uuid,_)) in ev.peers.iter() {
+            for (_,(peer_uuid,_,_)) in ev.peers.iter() {
                 if let Some(peer_uuid) = peer_uuid {
                     peer_network_ports.remove(peer_uuid);
                 }

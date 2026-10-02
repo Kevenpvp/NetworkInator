@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
-use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
+use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability, PortStatus};
 use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
 pub struct TcpClientSettings{
@@ -270,6 +270,14 @@ impl ClientPortTrait for TcpClientPort{
 
     fn is_main_port(&self) -> bool {
         self.main_port
+    }
+
+    fn get_port_status(&self) -> PortStatus {
+        PortStatus {
+            started: self.started,
+            first_started: self.first_started,
+            starting: self.starting
+        }
     }
 
     fn listen_to_server(&mut self, _network_port_shared_infos: &dyn Any) {

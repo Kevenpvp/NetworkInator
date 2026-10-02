@@ -18,7 +18,8 @@ pub struct ClientPortDisconnected{
     pub port_id: u32,
     pub connection_id: u32,
     pub error: Option<Error>,
-    pub was_connected: bool
+    pub was_connected: bool,
+    pub manually_closed: bool
 }
 
 impl Plugin for ClientNetworkPlugin {
@@ -157,7 +158,8 @@ pub fn check_port_disconnected(
                     port_id: 0,
                     connection_id: *connection_id,
                     error,
-                    was_connected
+                    was_connected,
+                    manually_closed: false
                 });
             }
         }
@@ -173,7 +175,8 @@ pub fn check_port_disconnected(
                         port_id,
                         connection_id: *connection_id,
                         error,
-                        was_connected
+                        was_connected,
+                        manually_closed: false
                     });
                 }
             }
@@ -185,7 +188,8 @@ pub fn check_port_disconnected(
             port_id: ev.port_id,
             connection_id: ev.connection_id,
             error: Some(Error::new(ErrorKind::Other,"Manually disconnected")),
-            was_connected: true
+            was_connected: ev.was_started,
+            manually_closed: true
         });
     }
 }

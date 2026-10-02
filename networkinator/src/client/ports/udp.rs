@@ -9,7 +9,7 @@ use bevy::log::warn;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
-use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability};
+use crate::shared::plugins::network::{ClientPortTrait, ClientSettingsPort, DefaultNetworkPortSharedInfosClient, PortReliability, PortStatus};
 use crate::shared::port_systems::inject_extract_uuid::inject_uuid;
 
 pub struct UdpClientSettings {
@@ -256,7 +256,7 @@ impl ClientPortTrait for UdpClientPort {
                     return;
                 }
             };
-            
+
             buffer = inject_uuid(buffer, local_session_uuid);
 
             let udp_socket = Arc::clone(udp_socket);
@@ -269,6 +269,14 @@ impl ClientPortTrait for UdpClientPort {
 
     fn is_main_port(&self) -> bool {
         false
+    }
+
+    fn get_port_status(&self) -> PortStatus {
+        PortStatus {
+            started: self.started,
+            first_started: self.first_started,
+            starting: self.starting
+        }
     }
 
     fn authenticate_port(&mut self) {

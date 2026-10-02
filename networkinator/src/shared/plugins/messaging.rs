@@ -1,16 +1,17 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::io::{Error, ErrorKind};
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, Messages, Resource, World};
+use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, MessageWriter, Messages, Resource, World};
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
 use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
 use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
-use crate::shared::plugins::network::{ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, PortClosedManually, ServerConnection};
+use crate::shared::plugins::network::{BytesReceivedFromPeer, BytesReceivedFromServer, ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
 type DispatchMessage = Box<dyn Any + Send>;
@@ -110,6 +111,8 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
     pub connection_id: u32
 }
 
+
+#[allow(unused)]
 impl<'w, 's> ServerConnectionParams<'w, 's> {
     pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<&SendArgs>){
         if let Some(local_peer_uuid) = &self.local_peer_uuid
@@ -160,21 +163,58 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
     }
 
     pub fn close_connection(&mut self, connection_id: u32) {
-        self.connection.close_connection(connection_id);
-
         if let Some(server_connection) = self.connection.0.get(&connection_id) {
-            let amount_secondary = server_connection.get_immutable_secondary_ports().len() as u32;
+            let mut was_connected_list: HashMap<u32,bool> = HashMap::new();
+            let mut peers_list: HashMap<u32,HashMap<Uuid,(Option<Uuid>,Error,bool)>>  = HashMap::new();
+            let secondary_ports = server_connection.get_immutable_secondary_ports();
+
+            if let Some(main_port) = server_connection.get_immutable_port(0) {
+                was_connected_list.insert(0,main_port.get_port_status().first_started);
+
+                let peers_sessions = main_port.get_all_sessions();
+                let mut hash_map_insert: HashMap<Uuid,(Option<Uuid>,Error,bool)> = HashMap::new();
+
+                for (uuid,peer_uuid) in peers_sessions {
+                    hash_map_insert.insert(uuid,(peer_uuid,Error::new(ErrorKind::Other, "Server disconnected"),true));
+                }
+                
+                peers_list.insert(0,hash_map_insert);
+            }
+
+            for (port_id, port) in secondary_ports.iter() {
+                was_connected_list.insert(*port_id,port.get_port_status().first_started);
+
+                let peers_sessions = port.get_all_sessions();
+                let mut hash_map_insert: HashMap<Uuid,(Option<Uuid>,Error,bool)> = HashMap::new();
+
+                for (uuid,peer_uuid) in peers_sessions {
+                    hash_map_insert.insert(uuid,(peer_uuid,Error::new(ErrorKind::Other, "Server disconnected"),true));
+                }
+                
+                peers_list.insert(*port_id,hash_map_insert);
+            }
+
+            self.connection.close_connection(connection_id);
 
             self.commands.queue(move |world: &mut World| {
                 world.write_message(ConnectionClosed {
                     connection_id
                 });
 
-                for port_id in 0..=amount_secondary {
+                for (port_id, was_started) in was_connected_list.iter() {
                     world.write_message(PortClosedManually{
                         connection_id,
-                        port_id
+                        port_id: *port_id,
+                        was_started: *was_started
                     });
+
+                    if let Some(peers) = peers_list.remove(port_id) {
+                        world.write_message(PeersManuallyDropped{
+                            peers,
+                            connection_id,
+                            port_id: *port_id
+                        });
+                    }
                 }
             });
         }
@@ -184,18 +224,77 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
         if port_id == 0 {
             self.close_connection(connection_id);
         }else{
+            let mut was_started = false;
+            let mut peers: HashMap<Uuid,(Option<Uuid>,Error,bool)> = HashMap::new();
+
+            if let Some(server_connection) = self.connection.0.get(&connection_id)
+            && let Some(port) = server_connection.get_immutable_port(port_id)
+            {
+                was_started = port.get_port_status().first_started;
+
+                let peers_sessions = port.get_all_sessions();
+                
+                for (uuid,peer_uuid) in peers_sessions {
+                    peers.insert(uuid,(peer_uuid,Error::new(ErrorKind::Other, "Server disconnected"),true));
+                }
+            }
+
             self.connection.close_port(connection_id, port_id);
 
             self.commands.queue(move |world: &mut World| {
                 world.write_message(PortClosedManually{
                     connection_id,
-                    port_id
+                    port_id,
+                    was_started
+                });
+
+                world.write_message(PeersManuallyDropped{
+                    peers,
+                    connection_id,
+                    port_id,
                 });
             });
         }
     }
+    
+    fn drop_peer_from_all_ports(&mut self, connection_id: u32, uuid: Uuid){
+        let disconnected = self.connection.disconnect_peer_or_session(connection_id, &uuid);
+
+        self.commands.queue(move |world: &mut World| {
+            for (port_id,(season_uuid,peer_id)) in disconnected {
+                world.write_message(PeersManuallyDropped{
+                    peers: HashMap::from([
+                        (season_uuid,(peer_id,Error::new(ErrorKind::Other, "Server disconnected"),true)),
+                    ]),
+                    connection_id,
+                    port_id,
+                });
+            }
+        });
+    }
+    
+    fn drop_peer_from_port(&mut self, connection_id: u32, port_id: u32, uuid: Uuid){
+        if let Some(server_connection) = self.connection.0.get_mut(&connection_id) 
+        && let Some(port) = server_connection.get_port(port_id)
+        {
+            let disconnected = port.disconnect_peer_or_session(&uuid);
+            
+            if let Some(disconnected) = disconnected {
+                self.commands.queue(move |world: &mut World| {
+                    world.write_message(PeersManuallyDropped{
+                        peers: HashMap::from([
+                            (disconnected.0,(disconnected.1,Error::new(ErrorKind::Other, "Server disconnected"),true)),
+                        ]),
+                        connection_id,
+                        port_id,
+                    });
+                });
+            }
+        }
+    }
 }
 
+#[allow(unused)]
 impl<'w, 's> ClientConnectionParams<'w, 's> {
     pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, local_session_uuid: Option<Uuid>, send_args: Option<&SendArgs>){
         let type_id = TypeId::of::<T>();
@@ -221,20 +320,30 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
     }
 
     pub fn close_connection(&mut self, connection_id: u32) {
-        self.connection.close_connection(connection_id);
-
         if let Some(client_connection) = self.connection.0.get(&connection_id) {
-            let amount_secondary = client_connection.get_immutable_secondary_ports().len() as u32;
+            let mut was_connected_list: HashMap<u32,bool> = HashMap::new();
+            let secondary_ports = client_connection.get_immutable_secondary_ports();
+
+            if let Some(main_port) = client_connection.get_immutable_port(0) {
+                was_connected_list.insert(0,main_port.get_port_status().first_started);
+            }
+
+            for (port_id, port) in secondary_ports.iter() {
+                was_connected_list.insert(*port_id,port.get_port_status().first_started);
+            }
+
+            self.connection.close_connection(connection_id);
 
             self.commands.queue(move |world: &mut World| {
                 world.write_message(ConnectionClosed {
                     connection_id
                 });
 
-                for port_id in 0..=amount_secondary {
-                    world.write_message(PortClosedManually {
+                for (port_id, was_started) in was_connected_list.iter() {
+                    world.write_message(PortClosedManually{
                         connection_id,
-                        port_id
+                        port_id: *port_id,
+                        was_started: *was_started
                     });
                 }
             });
@@ -245,12 +354,21 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
         if port_id == 0 {
             self.close_connection(connection_id);
         }else{
+            let mut was_started = false;
+
+            if let Some(client_connection) = self.connection.0.get(&connection_id)
+                && let Some(port) = client_connection.get_immutable_port(port_id)
+            {
+                was_started = port.get_port_status().first_started;
+            }
+
             self.connection.close_port(connection_id, port_id);
 
             self.commands.queue(move |world: &mut World| {
-                world.write_message(PortClosedManually {
+                world.write_message(PortClosedManually{
                     connection_id,
-                    port_id
+                    port_id,
+                    was_started
                 });
             });
         }
@@ -391,13 +509,22 @@ pub fn check_messages_from_client(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
     messages_registry_server: NetRes<MessagesRegistryServer>,
     mut commands: Commands,
+    mut bytes_received_from_peer: MessageWriter<BytesReceivedFromPeer>
 ){
     for (connection_id,connection) in network_connection.0.iter_mut(){
         if let Some(main_port) = connection.get_port(0){
             for (session_uuid, (messages, peer_uuid)) in main_port.get_peers_messages() {
                 for bytes in messages {
+                    bytes_received_from_peer.write(BytesReceivedFromPeer{
+                        peer_season_uuid: session_uuid,
+                        peer_id: peer_uuid,
+                        connection_id: *connection_id,
+                        port_id: 0,
+                        bytes_length: bytes.len(),
+                    });
+                    
                     main_port.pong(&session_uuid, &bytes, None);
-
+                    
                     if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
                         let message = (registry.deserialize)(&message_infos.message);
                         let dispatch = registry.dispatch_message;
@@ -414,6 +541,14 @@ pub fn check_messages_from_client(
         for (port_id,port) in connection.get_secondary_ports().iter_mut() {
             for (session_uuid, (messages, peer_uuid)) in port.get_peers_messages() {
                 for bytes in messages {
+                    bytes_received_from_peer.write(BytesReceivedFromPeer{
+                        peer_season_uuid: session_uuid,
+                        peer_id: peer_uuid,
+                        connection_id: *connection_id,
+                        port_id: *port_id,
+                        bytes_length: bytes.len(),
+                    });
+                    
                     port.pong(&session_uuid, &bytes, None);
 
                     if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
@@ -435,11 +570,18 @@ pub fn check_messages_from_client(
 pub fn check_messages_from_server(
     mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
     messages_registry_client: NetRes<MessagesRegistryClient>,
-    mut commands: Commands
+    mut commands: Commands,
+    mut bytes_received_from_server: MessageWriter<BytesReceivedFromServer>
 ){
     for (connection_id,connection) in network_connection.0.iter_mut(){
         if let Some(main_port) = connection.get_port(0){
             for bytes in main_port.get_server_messages() {
+                bytes_received_from_server.write(BytesReceivedFromServer{
+                    connection_id: *connection_id,
+                    port_id: 0,
+                    bytes_length: bytes.len(),
+                });
+                
                 main_port.pong(&bytes, None);
 
                 if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
@@ -456,6 +598,12 @@ pub fn check_messages_from_server(
 
         for (port_id,port) in connection.get_secondary_ports().iter_mut() {
             for bytes in port.get_server_messages() {
+                bytes_received_from_server.write(BytesReceivedFromServer{
+                    connection_id: *connection_id,
+                    port_id: *port_id,
+                    bytes_length: bytes.len(),
+                });
+                
                 port.pong(&bytes, None);
 
                 if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
