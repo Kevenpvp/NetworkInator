@@ -16,6 +16,8 @@ use crate::shared::plugins::messaging::{MessageInfos, MessageTrait, SendArgs};
 use crate::shared::plugins::network::{DefaultNetworkPortSharedInfosServer, PortReliability, PortStatus, ServerPortTrait, ServerSettingsPort};
 use crate::shared::port_systems::read_writer_tcp::{extract_messages_from_buffer, value_from_number, write_from_settings, BytesOptions, OrderOptions};
 
+type PerDisconnectSenderType = (Uuid,Option<Uuid>,Error,bool);
+
 pub struct TcpServerSettings{
     address: IpAddr,
     port: u16,
@@ -59,8 +61,8 @@ pub struct TcpServerPort{
     peer_connected_receiver: UnboundedReceiver<(TcpStream, SocketAddr, Option<OwnedSemaphorePermit>)>,
     peer_connected_sender: Arc<UnboundedSender<(TcpStream, SocketAddr, Option<OwnedSemaphorePermit>)>>,
 
-    peer_disconnected_receiver: UnboundedReceiver<(Uuid,Option<Uuid>,Error,bool)>,
-    peer_disconnected_sender: Arc<UnboundedSender<(Uuid,Option<Uuid>,Error,bool)>>,
+    peer_disconnected_receiver: UnboundedReceiver<PerDisconnectSenderType>,
+    peer_disconnected_sender: Arc<UnboundedSender<PerDisconnectSenderType>>,
 }
 
 impl TcpServerSettings {
@@ -113,7 +115,7 @@ impl ServerSettingsPort for TcpServerSettings{
         let (tcp_listener_sender,tpc_listener_receiver) = unbounded_channel::<Option<Arc<TcpListener>>>();
         let (connecting_downed_sender,connecting_downed_receiver) = unbounded_channel::<(Error,bool)>();
         let (peer_connected_sender,peer_connected_receiver) = unbounded_channel::<(TcpStream, SocketAddr, Option<OwnedSemaphorePermit>)>();
-        let (peer_disconnected_sender,peer_disconnected_receiver) = unbounded_channel::<(Uuid,Option<Uuid>,Error,bool)>();
+        let (peer_disconnected_sender,peer_disconnected_receiver) = unbounded_channel::<PerDisconnectSenderType>();
 
         Box::new(TcpServerPort{
             tcp_listener: None,
@@ -285,7 +287,7 @@ impl ServerPortTrait for TcpServerPort{
                 self.starting = false;
                 
                 for (season_uuid, peers_connected) in self.peers_connected.drain() {
-                    if let Err(send_error) = self.peer_disconnected_sender.send((season_uuid,peers_connected.peer_id,Error::new(ErrorKind::Other,"Server Disconnected"),true)) {
+                    if let Err(send_error) = self.peer_disconnected_sender.send((season_uuid,peers_connected.peer_id,Error::other("Server Disconnected"),true)) {
                         warn!("Failed to send peer disconnected due server, error: {}", send_error);
                     }
                 }

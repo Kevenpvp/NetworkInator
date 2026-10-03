@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind};
+use std::io::{Error};
 use bevy::app::App;
 use bevy::prelude::{error, First, IntoScheduleConfigs, Message, MessageWriter, Plugin, MessageReader};
 use crate::{NetRes, NetResMut};
@@ -187,7 +187,7 @@ pub fn check_port_disconnected(
         client_port_disconnected.write(ClientPortDisconnected{
             port_id: ev.port_id,
             connection_id: ev.connection_id,
-            error: Some(Error::new(ErrorKind::Other,"Manually disconnected")),
+            error: Some(Error::other("Manually disconnected")),
             was_connected: ev.was_started,
             manually_closed: true
         });

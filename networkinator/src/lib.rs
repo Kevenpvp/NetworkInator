@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::io::Error;
+use bevy::asset::uuid::Uuid;
 pub use message_pro_macro::ConnectionMessage;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,4 +24,6 @@ pub type NetResMut<'a, T> = ResMut<'a, T>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub type NetRes<'a, T> = Res<'a, T>;
+
+type PeersDroppedType = HashMap<Uuid,(Option<Uuid>, Error, bool)>;
 

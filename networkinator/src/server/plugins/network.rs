@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind};
+use std::io::{Error};
 use std::time::Instant;
 use bevy::app::App;
 use bevy::asset::uuid::Uuid;
 use bevy::log::{error};
 use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin};
-use crate::NetResMut;
+use crate::{NetResMut, PeersDroppedType};
 use crate::shared::plugins::messaging::MessagingPlugin;
 use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
 
@@ -37,7 +37,7 @@ pub struct AnonymousPeersAcceptedOnPort{
 pub struct PeersDroppedServer{
     pub port_id: u32,
     pub connection_id: u32,
-    pub peers: HashMap<Uuid,(Option<Uuid>,Error,bool)>
+    pub peers: PeersDroppedType
 }
 
 impl Plugin for ServerNetworkPlugin {
@@ -278,7 +278,7 @@ pub fn check_port_disconnected(
         server_port_disconnected.write(ServerPortDisconnected{
             port_id: ev.port_id,
             connection_id: ev.connection_id,
-            error: Some(Error::new(ErrorKind::Other,"Manually disconnected")),
+            error: Some(Error::other("Manually disconnected")),
             was_connected: ev.was_started,
             manually_closed: true
         });

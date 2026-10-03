@@ -103,7 +103,7 @@ impl PingPorts {
         if let Some(current_connections_list) = self.0.get_mut(&connection_id) {
             current_connections_list.remove(&port_id);
 
-            if current_connections_list.len() == 0 {
+            if current_connections_list.is_empty() {
                 self.0.remove(&connection_id);
             }
         }
@@ -202,8 +202,8 @@ pub fn handle_client_ping(
     for ev in ping_reader.read() {
         if let Some(server_time_connection) = server_time.0.get_mut(&ev.connection_id)
         {
-            if let Some(mut server_time) = server_time_connection.get_mut(&ev.port_id) {
-                apply_server_time_offset(&ev.message,&mut server_time, client_now, &ping_ports, ev.connection_id, ev.port_id, &mut client_params, &local_session_uuid, &mut pings);
+            if let Some(server_time) = server_time_connection.get_mut(&ev.port_id) {
+                apply_server_time_offset(&ev.message,server_time, client_now, &ping_ports, ev.connection_id, ev.port_id, &mut client_params, &local_session_uuid, &mut pings);
             }else {
                 let mut server_time_data = ServerTimeData{
                     offset_secs: 0.0,

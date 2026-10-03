@@ -58,7 +58,7 @@ impl <'w> PeerPings<'w> {
     fn get_ping(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
         if let Some(peer_network_connections) = self.server_network_stats.0.get(&connection_id)
             && let Some(peer_network_ports) = peer_network_connections.get(&port_id)
-            && let Some(peer_network_stats) = peer_network_ports.get(&peer_uuid)
+            && let Some(peer_network_stats) = peer_network_ports.get(peer_uuid)
         {
             return peer_network_stats.get_ping()
         }
@@ -69,7 +69,7 @@ impl <'w> PeerPings<'w> {
     fn get_smooth_ping(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
         if let Some(peer_network_connections) = self.server_network_stats.0.get(&connection_id)
             && let Some(peer_network_ports) = peer_network_connections.get(&port_id)
-            && let Some(peer_network_stats) = peer_network_ports.get(&peer_uuid)
+            && let Some(peer_network_stats) = peer_network_ports.get(peer_uuid)
         {
             return peer_network_stats.get_smooth_ping()
         }
@@ -80,7 +80,7 @@ impl <'w> PeerPings<'w> {
     fn get_smooth_ping_no_frame_delay(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
         if let Some(peer_network_connections) = self.server_network_stats.0.get(&connection_id)
             && let Some(peer_network_ports) = peer_network_connections.get(&port_id)
-            && let Some(peer_network_stats) = peer_network_ports.get(&peer_uuid)
+            && let Some(peer_network_stats) = peer_network_ports.get(peer_uuid)
         {
             return peer_network_stats.get_smooth_ping_no_frame_delay(&self.time)
         }
@@ -104,7 +104,7 @@ impl PingPorts {
         if let Some(current_connections_list) = self.0.get_mut(&connection_id) {
             current_connections_list.remove(&port_id);
 
-            if current_connections_list.len() == 0 {
+            if current_connections_list.is_empty() {
                 self.0.remove(&connection_id);
             }
         }
@@ -260,7 +260,7 @@ fn peer_disconnected(
         if let Some(peer_network_connections) = stats.0.get_mut(&ev.connection_id)
         && let Some(peer_network_ports) = peer_network_connections.get_mut(&ev.port_id)
         {
-            for (_,(peer_uuid,_,_)) in ev.peers.iter() {
+            for (peer_uuid,_,_) in ev.peers.values() {
                 if let Some(peer_uuid) = peer_uuid {
                     peer_network_ports.remove(peer_uuid);
                 }

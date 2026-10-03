@@ -1,6 +1,6 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind};
+use std::io::{Error};
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
@@ -9,7 +9,7 @@ use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
-use crate::{NetRes, NetResMut};
+use crate::{NetRes, NetResMut, PeersDroppedType};
 use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
 use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
 use crate::shared::plugins::network::{BytesReceivedFromPeer, BytesReceivedFromServer, ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
@@ -165,17 +165,17 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
     pub fn close_connection(&mut self, connection_id: u32) {
         if let Some(server_connection) = self.connection.0.get(&connection_id) {
             let mut was_connected_list: HashMap<u32,bool> = HashMap::new();
-            let mut peers_list: HashMap<u32,HashMap<Uuid,(Option<Uuid>,Error,bool)>>  = HashMap::new();
+            let mut peers_list: HashMap<u32,PeersDroppedType>  = HashMap::new();
             let secondary_ports = server_connection.get_immutable_secondary_ports();
 
             if let Some(main_port) = server_connection.get_immutable_port(0) {
                 was_connected_list.insert(0,main_port.get_port_status().first_started);
 
                 let peers_sessions = main_port.get_all_sessions();
-                let mut hash_map_insert: HashMap<Uuid,(Option<Uuid>,Error,bool)> = HashMap::new();
+                let mut hash_map_insert: PeersDroppedType = HashMap::new();
 
                 for (uuid,peer_uuid) in peers_sessions {
-                    hash_map_insert.insert(uuid,(peer_uuid,Error::new(ErrorKind::Other, "Server disconnected"),true));
+                    hash_map_insert.insert(uuid,(peer_uuid,Error::other("Server disconnected"),true));
                 }
                 
                 peers_list.insert(0,hash_map_insert);
@@ -188,7 +188,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
                 let mut hash_map_insert: HashMap<Uuid,(Option<Uuid>,Error,bool)> = HashMap::new();
 
                 for (uuid,peer_uuid) in peers_sessions {
-                    hash_map_insert.insert(uuid,(peer_uuid,Error::new(ErrorKind::Other, "Server disconnected"),true));
+                    hash_map_insert.insert(uuid,(peer_uuid,Error::other("Server disconnected"),true));
                 }
                 
                 peers_list.insert(*port_id,hash_map_insert);
@@ -235,7 +235,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
                 let peers_sessions = port.get_all_sessions();
                 
                 for (uuid,peer_uuid) in peers_sessions {
-                    peers.insert(uuid,(peer_uuid,Error::new(ErrorKind::Other, "Server disconnected"),true));
+                    peers.insert(uuid,(peer_uuid,Error::other("Server disconnected"),true));
                 }
             }
 
@@ -264,7 +264,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             for (port_id,(season_uuid,peer_id)) in disconnected {
                 world.write_message(PeersManuallyDropped{
                     peers: HashMap::from([
-                        (season_uuid,(peer_id,Error::new(ErrorKind::Other, "Server disconnected"),true)),
+                        (season_uuid,(peer_id,Error::other("Server disconnected"),true)),
                     ]),
                     connection_id,
                     port_id,
@@ -283,7 +283,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
                 self.commands.queue(move |world: &mut World| {
                     world.write_message(PeersManuallyDropped{
                         peers: HashMap::from([
-                            (disconnected.0,(disconnected.1,Error::new(ErrorKind::Other, "Server disconnected"),true)),
+                            (disconnected.0,(disconnected.1,Error::other("Server disconnected"),true)),
                         ]),
                         connection_id,
                         port_id,

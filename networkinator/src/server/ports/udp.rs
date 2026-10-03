@@ -442,7 +442,6 @@ impl ServerPortTrait for UdpServerPort {
     fn disconnect_peer_or_session(&mut self, uuid: &Uuid) -> Option<(Uuid,Option<Uuid>)> {
         if let Some(peer_connected) = self.peers_connected.remove(uuid) {
             let peer_id = peer_connected.peer_id;
-            drop(peer_connected);
             return Some((*uuid, peer_id))
         }
 
