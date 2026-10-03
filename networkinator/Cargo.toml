@@ -7,7 +7,6 @@ publish.workspace = true
 description = "Crate for network on bevy"
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 [dependencies]
 bevy = { workspace = true }
