@@ -7,6 +7,5 @@ publish = false
 [dependencies]
 networkinator = {path = "../../../networkinator"}
 bevy = { workspace = true, features = ["dynamic_linking"] }
-message_pro_macro = { path = "../../../message_pro_macro" }
 serde = { workspace = true }
 postcard = { workspace = true }

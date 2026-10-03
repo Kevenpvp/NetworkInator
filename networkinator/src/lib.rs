@@ -1,3 +1,5 @@
+pub use message_pro_macro::ConnectionMessage;
+
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::prelude::{Res, ResMut};
 

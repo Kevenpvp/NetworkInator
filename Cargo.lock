@@ -2010,7 +2010,6 @@ name = "client_dedicated_test"
 version = "0.2.1"
 dependencies = [
  "bevy",
- "message_pro_macro 0.1.1",
  "networkinator",
  "postcard",
  "serde",
@@ -3495,7 +3494,6 @@ name = "local_server"
 version = "0.2.1"
 dependencies = [
  "bevy",
- "message_pro_macro 0.1.1",
  "networkinator",
  "postcard",
  "serde",
@@ -3552,18 +3550,6 @@ dependencies = [
 [[package]]
 name = "message_pro_macro"
 version = "0.1.1"
-dependencies = [
- "postcard",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "message_pro_macro"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5562b38652203d2f6db9f9b4fce423e3a41346d1e78210fad37051b2368ded"
 dependencies = [
  "postcard",
  "proc-macro2",
@@ -3695,7 +3681,7 @@ dependencies = [
  "futures-util",
  "gloo-net",
  "gloo-timers",
- "message_pro_macro 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "message_pro_macro",
  "postcard",
  "send_wrapper",
  "serde",
@@ -4835,7 +4821,6 @@ name = "server_dedicated_test"
 version = "0.2.1"
 dependencies = [
  "bevy",
- "message_pro_macro 0.1.1",
  "networkinator",
  "postcard",
  "serde",

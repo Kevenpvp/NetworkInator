@@ -8,7 +8,6 @@ publish = false
 networkinator = {path = "../../networkinator"}
 bevy = { workspace = true }
 serde = { workspace = true }
-message_pro_macro = { path = "../../message_pro_macro" }
 postcard = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

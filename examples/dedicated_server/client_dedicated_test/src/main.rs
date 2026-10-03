@@ -2,12 +2,11 @@ use networkinator::shared::plugins::messaging::{ClientConnectionParams, MessageT
 use bevy::DefaultPlugins;
 use bevy::prelude::{App, MessageReader, Startup, Update};
 use serde::{Deserialize, Serialize};
-use message_pro_macro::ConnectionMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use networkinator::client::ports::tcp::TcpClientSettings;
 #[cfg(not(target_arch = "wasm32"))]
 use networkinator::client::ports::udp::UdpClientSettings;
-use networkinator::{NetRes, NetResMut};
+use networkinator::{ConnectionMessage, NetRes, NetResMut};
 use networkinator::client::plugins::network::ClientNetworkPlugin;
 use networkinator::client::plugins::ping::ClientPing;
 #[cfg(target_arch = "wasm32")]

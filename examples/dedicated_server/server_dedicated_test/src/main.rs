@@ -4,14 +4,13 @@ pub(crate) use bevy::DefaultPlugins;
 #[cfg(target_arch = "wasm32")]
 use bevy::log::warn;
 
-
 #[cfg(not(target_arch = "wasm32"))]
 pub mod not_wasm_uses {
+    pub(crate) use networkinator::ConnectionMessage;
     pub(crate) use networkinator::shared::plugins::messaging::{MessageReceivedFromPeer, MessageTrait, MessageTraitPlugin, MessagingPlugin};
     pub(crate) use bevy::app::Update;
     pub(crate) use bevy::prelude::{MessageReader, Startup};
     pub(crate) use serde::{Deserialize, Serialize};
-    pub(crate) use message_pro_macro::ConnectionMessage;
     pub(crate) use networkinator::NetResMut;
     pub(crate) use networkinator::server::plugins::network::ServerNetworkPlugin;
     pub(crate) use networkinator::server::ports::tcp::TcpServerSettings;

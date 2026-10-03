@@ -8,5 +8,4 @@ publish = false
 networkinator = {path = "../../../networkinator"}
 bevy = { workspace = true, features = ["dynamic_linking"]  }
 serde = { workspace = true }
-message_pro_macro = { path = "../../../message_pro_macro" }
 postcard = { workspace = true }
