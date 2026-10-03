@@ -1,9 +1,9 @@
 [package]
 name = "message_pro_macro"
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 authors.workspace = true
-publish = false
+publish = true
 
 description = "Macros for NetworkInator"
 license.workspace = true

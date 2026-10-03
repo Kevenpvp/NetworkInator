@@ -36,7 +36,7 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
             impl MessageTrait for #name {
                 fn as_authentication(&self) -> bool { true }
 
-                fn deserialize(data: &[u8]) -> Self {
+                fn deserialize_message(data: &[u8]) -> Self {
                     postcard::from_bytes(data).unwrap()
                 }
             }
@@ -46,7 +46,7 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
             impl MessageTrait for #name {
                 fn as_authentication(&self) -> bool { false }
 
-                fn deserialize(data: &[u8]) -> Self {
+                fn deserialize_message(data: &[u8]) -> Self {
                     postcard::from_bytes(data).unwrap()
                 }
             }
