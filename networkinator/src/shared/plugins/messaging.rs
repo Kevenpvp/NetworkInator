@@ -8,6 +8,7 @@ use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, MessageWriter
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use crate::{NetRes, NetResMut};
 use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
 use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
@@ -27,7 +28,7 @@ pub type SendArgs = Box<dyn Any + Send + Sync>;
 
 #[cfg(target_arch = "wasm32")]
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
-    fn deserialize(data: &[u8]) -> Self where Self: Sized;
+    fn deserialize(data: &[u8]) -> Self where Self: Sized + DeserializeOwned;
     fn as_authentication(&self) -> bool {
         false
     }
@@ -35,7 +36,7 @@ pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Syn
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
-    fn deserialize(data: &[u8]) -> Self where Self: Sized;
+    fn deserialize_message(data: &[u8]) -> Self where Self: Sized + DeserializeOwned;
     fn as_authentication(&self) -> bool {
         false
     }
@@ -56,7 +57,7 @@ pub struct MessageFunctionsClient{
 }
 
 pub trait MessageTraitPlugin{
-    fn register_message<T: MessageTrait>(&mut self);
+    fn register_message<T: MessageTrait + DeserializeOwned>(&mut self);
 }
 
 #[derive(Serialize,Deserialize)]
@@ -110,7 +111,6 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
     pub port_id: u32,
     pub connection_id: u32
 }
-
 
 #[allow(unused)]
 impl<'w, 's> ServerConnectionParams<'w, 's> {
@@ -405,7 +405,7 @@ impl Plugin for MessagingPlugin {
 }
 
 impl MessageTraitPlugin for App {
-    fn register_message<T: MessageTrait>(&mut self) {
+    fn register_message<T: MessageTrait + DeserializeOwned>(&mut self) {
         let (is_client, is_local_server, is_dedicated_server) = {
             let world = self.world();
             let sides = world.get_resource::<CurrentNetworkSides>()
@@ -621,8 +621,8 @@ pub fn check_messages_from_server(
     }
 }
 
-fn deserialize_message<T: MessageTrait>(bytes: &[u8]) -> DispatchMessage {
-    let message = T::deserialize(bytes);
+fn deserialize_message<T: MessageTrait + DeserializeOwned>(bytes: &[u8]) -> DispatchMessage {
+    let message = T::deserialize_message(bytes);
 
     Box::new(message)
 }
