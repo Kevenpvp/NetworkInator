@@ -36,12 +36,7 @@ pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Syn
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
-    fn deserialize_message(data: &[u8]) -> Option<Self> where Self: Sized + DeserializeOwned {
-        match postcard::from_bytes(data) {
-            Ok(message) => Some(message),
-            Err(_) => None,
-        }
-    }
+    fn deserialize_message(data: &[u8]) -> Option<Self> where Self: Sized + DeserializeOwned;
     fn as_authentication(&self) -> bool {
         false
     }
