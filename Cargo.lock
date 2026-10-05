@@ -2007,7 +2007,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "client_dedicated_test"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bevy",
  "networkinator",
@@ -3491,7 +3491,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "local_server"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bevy",
  "networkinator",
@@ -3674,7 +3674,7 @@ dependencies = [
 
 [[package]]
 name = "networkinator"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bevy",
  "erased-serde",
@@ -4818,7 +4818,7 @@ dependencies = [
 
 [[package]]
 name = "server_dedicated_test"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bevy",
  "networkinator",

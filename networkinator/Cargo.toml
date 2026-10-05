@@ -13,7 +13,7 @@ bevy = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 erased-serde = { workspace = true }
-message_pro_macro = { path = "../message_pro_macro", version = "0.1.1" }
+message_pro_macro = { path = "../message_pro_macro", version = "0.1.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { workspace = true, features = ["sync", "rt", "macros", "time", "io-util"] }
