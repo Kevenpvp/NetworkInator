@@ -28,7 +28,7 @@ pub type SendArgs = Box<dyn Any + Send + Sync>;
 
 #[cfg(target_arch = "wasm32")]
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
-    fn deserialize(data: &[u8]) -> Option<Self> where Self: Sized + DeserializeOwned;
+    fn deserialize_message(data: &[u8]) -> Option<Self> where Self: Sized + DeserializeOwned;
     fn as_authentication(&self) -> bool {
         false
     }
