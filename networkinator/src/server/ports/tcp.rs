@@ -328,8 +328,17 @@ impl ServerPortTrait for TcpServerPort{
     }
 
     fn send_message_to_peer(&mut self, message_id: u32, peer_id: Uuid, network_port_shared_infos: &dyn Any, message: &dyn MessageTrait, _send_args: Option<&SendArgs>) {
-        if let Some(peer_authenticated) = self.peers_authenticated.get_mut(&peer_id)
-        && let Some(peer_connected) = self.peers_connected.get_mut(peer_authenticated)
+        let peer_connected = if let Some(peer_connected) = self.peers_connected.get_mut(&peer_id) { Some(peer_connected) } else {
+            if let Some(peer_authenticated) = self.peers_authenticated.get_mut(&peer_id)
+                && let Some(peer_connected) = self.peers_connected.get_mut(peer_authenticated)
+            {
+                Some(peer_connected)
+            }else {
+                None
+            }
+        };
+
+        if let Some(peer_connected) = peer_connected
         && let Some(default_network_port_shared_infos) = network_port_shared_infos.downcast_ref::<DefaultNetworkPortSharedInfosServer>()
         && let Some(runtime) = &default_network_port_shared_infos.get_runtime()
         {

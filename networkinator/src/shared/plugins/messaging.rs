@@ -4,7 +4,7 @@ use std::io::{Error};
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, MessageWriter, Messages, Resource, World};
+use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, MessageWriter, Messages, Resource};
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 use crate::{NetRes, NetResMut, PeersDroppedType};
 use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
 use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
-use crate::shared::plugins::network::{BytesReceivedFromPeer, BytesReceivedFromServer, ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
+use crate::shared::plugins::network::{BytesReceivedFromPeer, BytesReceivedFromServer, ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, LocalSessionUUID, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
 type DispatchMessage = Box<dyn Any + Send>;
@@ -36,7 +36,12 @@ pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Syn
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
-    fn deserialize_message(data: &[u8]) -> Self where Self: Sized + DeserializeOwned;
+    fn deserialize_message(data: &[u8]) -> Option<Self> where Self: Sized + DeserializeOwned {
+        match postcard::from_bytes(data) {
+            Ok(message) => Some(message),
+            Err(_) => None,
+        }
+    }
     fn as_authentication(&self) -> bool {
         false
     }
@@ -47,13 +52,13 @@ serialize_trait_object!(MessageTrait);
 pub struct MessagingPlugin;
 
 pub struct MessageFunctionsServer{
-    deserialize: fn(&[u8]) -> DispatchMessage,
-    dispatch_message: fn(world: &mut World, message: DispatchMessage, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
+    deserialize: fn(&[u8]) -> Option<DispatchMessage>,
+    dispatch_message: fn(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
 }
 
 pub struct MessageFunctionsClient{
-    deserialize: fn(&[u8]) -> DispatchMessage,
-    dispatch_message: fn(world: &mut World, message: DispatchMessage, connection_id: u32, port_id: u32)
+    deserialize: fn(&[u8]) -> Option<DispatchMessage>,
+    dispatch_message: fn(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32)
 }
 
 pub trait MessageTraitPlugin{
@@ -77,6 +82,7 @@ pub struct ServerConnectionParams<'w, 's> {
     messages_registry: NetRes<'w, MessagesRegistryServer>,
     connection: NetResMut<'w, NetworkConnection<ServerConnection>>,
     local_peer_uuid: Option<NetRes<'w, LocalPeerUUID>>,
+    local_session_uuid: Option<NetRes<'w, LocalSessionUUID>>,
     commands: Commands<'w, 's>
 }
 
@@ -119,13 +125,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             && let Some(local_peer_uuid) = &local_peer_uuid.0
         && local_peer_uuid == &peer_id
         {
-            self.commands.queue(move |world: &mut World| {
-                world.write_message(MessageReceivedFromServer{
-                    message,
-                    port_id,
-                    connection_id,
-                });
+            self.commands.write_message(MessageReceivedFromServer{
+                message,
+                port_id,
+                connection_id,
             });
+
             return;
         }
 
@@ -136,23 +141,90 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
         }
     }
 
+    pub fn send_message_non_authenticated<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, session_uuid: Uuid, send_args: Option<&SendArgs>){
+        if let Some(local_session_uuid) = &self.local_session_uuid
+            && let Some(local_session_uuid) = &local_session_uuid.0
+            && local_session_uuid == &session_uuid
+        {
+            self.commands.write_message(MessageReceivedFromServer{
+                message,
+                port_id,
+                connection_id,
+            });
+            return;
+        }
+
+        let type_id = TypeId::of::<T>();
+
+        if let Some(message_id) = self.messages_registry.2.get(&type_id) {
+            self.connection.send_message(*message_id, connection_id, port_id, &message, session_uuid, send_args);
+        }
+    }
+
+    pub fn send_message_for_list<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, send_args: Option<&SendArgs>, list: Vec<Uuid>){
+        let type_id = TypeId::of::<T>();
+
+        if let Some(message_id) = self.messages_registry.2.get(&type_id) {
+            let local_peer_uuid = if let Some(local_peer_uuid) = &self.local_peer_uuid { &local_peer_uuid.0 } else { &None };
+            let local_session_uuid = if let Some(local_session_uuid) = &self.local_session_uuid { &local_session_uuid.0 } else { &None };
+            let mut found_local_uuid = false;
+
+            for uuid in list{
+                if let Some(local_peer_uuid) = local_peer_uuid
+                    && &uuid == local_peer_uuid
+                {
+                    found_local_uuid = true;
+                    continue;
+                }
+
+                if let Some(local_session_uuid) = local_session_uuid
+                    && &uuid == local_session_uuid
+                {
+                    found_local_uuid = true;
+                    continue;
+                }
+
+                self.connection.send_message(*message_id, connection_id, port_id, &message, uuid, send_args);
+            }
+
+            if found_local_uuid {
+                self.commands.write_message(MessageReceivedFromServer {
+                    message,
+                    port_id,
+                    connection_id,
+                });
+            }
+        }
+    }
+
     pub fn send_message_for_all<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, just_authenticated: bool, send_args: Option<&SendArgs>, exceptions: Vec<Uuid>){
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
             let local_peer_uuid = if let Some(local_peer_uuid) = &self.local_peer_uuid { &local_peer_uuid.0 } else { &None };
+            let local_session_uuid = if let Some(local_session_uuid) = &self.local_session_uuid { &local_session_uuid.0 } else { &None };
 
             self.connection.send_message_to_all_peer(*message_id, connection_id, port_id, &message, local_peer_uuid, just_authenticated, send_args, &exceptions);
 
             if let Some(local_peer_uuid) = local_peer_uuid
                 && !exceptions.contains(local_peer_uuid)
             {
-                self.commands.queue(move |world: &mut World| {
-                    world.write_message(MessageReceivedFromServer {
-                        message,
-                        port_id,
-                        connection_id,
-                    });
+                self.commands.write_message(MessageReceivedFromServer {
+                    message,
+                    port_id,
+                    connection_id,
+                });
+
+                return;
+            }
+
+            if let Some(local_session_uuid) = local_session_uuid
+                && !exceptions.contains(local_session_uuid)
+            {
+                self.commands.write_message(MessageReceivedFromServer {
+                    message,
+                    port_id,
+                    connection_id,
                 });
             }
         }
@@ -196,27 +268,25 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 
             self.connection.close_connection(connection_id);
 
-            self.commands.queue(move |world: &mut World| {
-                world.write_message(ConnectionClosed {
-                    connection_id
+            self.commands.write_message(ConnectionClosed {
+                connection_id
+            });
+
+            for (port_id, was_started) in was_connected_list.iter() {
+                self.commands.write_message(PortClosedManually{
+                    connection_id,
+                    port_id: *port_id,
+                    was_started: *was_started
                 });
 
-                for (port_id, was_started) in was_connected_list.iter() {
-                    world.write_message(PortClosedManually{
+                if let Some(peers) = peers_list.remove(port_id) {
+                    self.commands.write_message(PeersManuallyDropped{
+                        peers,
                         connection_id,
-                        port_id: *port_id,
-                        was_started: *was_started
+                        port_id: *port_id
                     });
-
-                    if let Some(peers) = peers_list.remove(port_id) {
-                        world.write_message(PeersManuallyDropped{
-                            peers,
-                            connection_id,
-                            port_id: *port_id
-                        });
-                    }
                 }
-            });
+            }
         }
     }
     
@@ -241,36 +311,36 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 
             self.connection.close_port(connection_id, port_id);
 
-            self.commands.queue(move |world: &mut World| {
-                world.write_message(PortClosedManually{
+            self.commands.write_message(
+                PortClosedManually{
                     connection_id,
                     port_id,
                     was_started
-                });
+                }
+            );
 
-                world.write_message(PeersManuallyDropped{
+            self.commands.write_message(
+                PeersManuallyDropped{
                     peers,
                     connection_id,
                     port_id,
-                });
-            });
+                }
+            );
         }
     }
     
     fn drop_peer_from_all_ports(&mut self, connection_id: u32, uuid: Uuid){
         let disconnected = self.connection.disconnect_peer_or_session(connection_id, &uuid);
 
-        self.commands.queue(move |world: &mut World| {
-            for (port_id,(season_uuid,peer_id)) in disconnected {
-                world.write_message(PeersManuallyDropped{
-                    peers: HashMap::from([
-                        (season_uuid,(peer_id,Error::other("Server disconnected"),true)),
-                    ]),
-                    connection_id,
-                    port_id,
-                });
-            }
-        });
+        for (port_id,(season_uuid,peer_id)) in disconnected {
+            self.commands.write_message(PeersManuallyDropped{
+                peers: HashMap::from([
+                    (season_uuid,(peer_id,Error::other("Server disconnected"),true)),
+                ]),
+                connection_id,
+                port_id,
+            });
+        }
     }
     
     fn drop_peer_from_port(&mut self, connection_id: u32, port_id: u32, uuid: Uuid){
@@ -280,14 +350,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             let disconnected = port.disconnect_peer_or_session(&uuid);
             
             if let Some(disconnected) = disconnected {
-                self.commands.queue(move |world: &mut World| {
-                    world.write_message(PeersManuallyDropped{
-                        peers: HashMap::from([
-                            (disconnected.0,(disconnected.1,Error::other("Server disconnected"),true)),
-                        ]),
-                        connection_id,
-                        port_id,
-                    });
+                self.commands.write_message(PeersManuallyDropped{
+                    peers: HashMap::from([
+                        (disconnected.0,(disconnected.1,Error::other("Server disconnected"),true)),
+                    ]),
+                    connection_id,
+                    port_id,
                 });
             }
         }
@@ -303,14 +371,12 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
             && self.connection.send_message_to_server(*message_id, connection_id, port_id, &message, local_session_uuid, send_args)
             && let Some(local_peer_uuid) = self.local_peer_uuid.0 && let Some(local_session_uuid) = local_session_uuid {
 
-            self.commands.queue(move |world: &mut World| {
-                world.write_message(MessageReceivedFromPeer{
-                    message,
-                    peer_uuid: local_peer_uuid,
-                    session_uuid: local_session_uuid,
-                    port_id,
-                    connection_id,
-                });
+            self.commands.write_message(MessageReceivedFromPeer{
+                message,
+                peer_uuid: local_peer_uuid,
+                session_uuid: local_session_uuid,
+                port_id,
+                connection_id,
             });
         }
     }
@@ -334,19 +400,17 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
 
             self.connection.close_connection(connection_id);
 
-            self.commands.queue(move |world: &mut World| {
-                world.write_message(ConnectionClosed {
-                    connection_id
-                });
-
-                for (port_id, was_started) in was_connected_list.iter() {
-                    world.write_message(PortClosedManually{
-                        connection_id,
-                        port_id: *port_id,
-                        was_started: *was_started
-                    });
-                }
+            self.commands.write_message(ConnectionClosed {
+                connection_id
             });
+
+            for (port_id, was_started) in was_connected_list.iter() {
+                self.commands.write_message(PortClosedManually{
+                    connection_id,
+                    port_id: *port_id,
+                    was_started: *was_started
+                });
+            }
         }
     }
 
@@ -364,12 +428,10 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
 
             self.connection.close_port(connection_id, port_id);
 
-            self.commands.queue(move |world: &mut World| {
-                world.write_message(PortClosedManually{
-                    connection_id,
-                    port_id,
-                    was_started
-                });
+            self.commands.write_message(PortClosedManually{
+                connection_id,
+                port_id,
+                was_started
             });
         }
     }
@@ -526,13 +588,12 @@ pub fn check_messages_from_client(
                     main_port.pong(&session_uuid, &bytes, None);
                     
                     if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
-                        let message = (registry.deserialize)(&message_infos.message);
-                        let dispatch = registry.dispatch_message;
-                        let connection_id = *connection_id;
+                        if let Some(message) = (registry.deserialize)(&message_infos.message) {
+                            let dispatch = registry.dispatch_message;
+                            let connection_id = *connection_id;
 
-                        commands.queue(move |world: &mut World| {
-                            dispatch(world, message, connection_id, 0, peer_uuid, session_uuid);
-                        })
+                            dispatch(&mut commands, message, connection_id, 0, peer_uuid, session_uuid);
+                        }
                     }
                 }
             }
@@ -552,14 +613,13 @@ pub fn check_messages_from_client(
                     port.pong(&session_uuid, &bytes, None);
 
                     if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
-                        let message = (registry.deserialize)(&message_infos.message);
-                        let dispatch = registry.dispatch_message;
-                        let connection_id = *connection_id;
-                        let port_id = *port_id;
+                        if let Some(message) = (registry.deserialize)(&message_infos.message) {
+                            let dispatch = registry.dispatch_message;
+                            let connection_id = *connection_id;
+                            let port_id = *port_id;
 
-                        commands.queue(move |world: &mut World| {
-                            dispatch(world, message, connection_id, port_id, peer_uuid, session_uuid);
-                        })
+                            dispatch(&mut commands, message, connection_id, port_id, peer_uuid, session_uuid);
+                        }
                     }
                 }
             }
@@ -585,13 +645,12 @@ pub fn check_messages_from_server(
                 main_port.pong(&bytes, None);
 
                 if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
-                    let message = (registry.deserialize)(&message_infos.message);
-                    let dispatch = registry.dispatch_message;
-                    let connection_id = *connection_id;
+                    if let Some(message) = (registry.deserialize)(&message_infos.message) {
+                        let dispatch = registry.dispatch_message;
+                        let connection_id = *connection_id;
 
-                    commands.queue(move |world: &mut World| {
-                        dispatch(world, message, connection_id, 0);
-                    })
+                        dispatch(&mut commands, message, connection_id, 0);
+                    }
                 }
             }
         }
@@ -607,34 +666,35 @@ pub fn check_messages_from_server(
                 port.pong(&bytes, None);
 
                 if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
-                    let message = (registry.deserialize)(&message_infos.message);
-                    let dispatch = registry.dispatch_message;
-                    let connection_id = *connection_id;
-                    let port_id = *port_id;
+                    if let Some(message) = (registry.deserialize)(&message_infos.message) {
+                        let dispatch = registry.dispatch_message;
+                        let connection_id = *connection_id;
+                        let port_id = *port_id;
 
-                    commands.queue(move |world: &mut World| {
-                        dispatch(world, message, connection_id, port_id);
-                    })
+                        dispatch(&mut commands, message, connection_id, port_id);
+                    }
                 }
             }
         }
     }
 }
 
-fn deserialize_message<T: MessageTrait + DeserializeOwned>(bytes: &[u8]) -> DispatchMessage {
-    let message = T::deserialize_message(bytes);
+fn deserialize_message<T: MessageTrait + DeserializeOwned>(bytes: &[u8]) -> Option<DispatchMessage> {
+    if let Some(message) = T::deserialize_message(bytes) {
+        return Some(Box::new(message))
+    }
 
-    Box::new(message)
+    None
 }
 
-fn dispatch_message_server<T: MessageTrait>(world: &mut World, message: DispatchMessage, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid)  {
+fn dispatch_message_server<T: MessageTrait>(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid)  {
     let message = match  message.downcast::<T>(){
         Ok(message) => message,
         Err(error) => { println!("Failed to downcast message type: {:?}", error); return; }
     };
 
     if let Some(peer_uuid) = peer_uuid{
-        world.write_message(MessageReceivedFromPeer {
+        commands.write_message(MessageReceivedFromPeer {
             message: *message,
             peer_uuid,
             session_uuid: session_id,
@@ -642,7 +702,7 @@ fn dispatch_message_server<T: MessageTrait>(world: &mut World, message: Dispatch
             connection_id,
         });
     }else {
-        world.write_message(MessageReceivedFromAnonymousPeer {
+        commands.write_message(MessageReceivedFromAnonymousPeer {
             message: *message,
             session_uuid: session_id,
             port_id,
@@ -651,10 +711,10 @@ fn dispatch_message_server<T: MessageTrait>(world: &mut World, message: Dispatch
     }
 }
 
-fn dispatch_message_client<T: MessageTrait>(world: &mut World, message: DispatchMessage, connection_id: u32, port_id: u32)  {
+fn dispatch_message_client<T: MessageTrait>(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32)  {
     let message = message.downcast::<T>().expect("Failed to downcast");
 
-    world.write_message(MessageReceivedFromServer{
+    commands.write_message(MessageReceivedFromServer{
         message: *message,
         port_id,
         connection_id,

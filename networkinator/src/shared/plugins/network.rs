@@ -815,8 +815,16 @@ impl NetworkConnection<ServerConnection> {
         HashMap::new()
     }
 
-    pub fn get_peers_connected(&mut self, connection_id: u32) -> Option<&HashMap<Uuid,ConnectedInfos>> {
+    pub fn get_peers_connected(&mut self, connection_id: u32) -> Option<&mut HashMap<Uuid,ConnectedInfos>> {
         if let Some(connection) = self.0.get_mut(&connection_id){
+            return Some(&mut connection.peers_connected)
+        }
+
+        None
+    }
+
+    pub fn get_peers_connected_immutable(&self, connection_id: u32) -> Option<&HashMap<Uuid,ConnectedInfos>> {
+        if let Some(connection) = self.0.get(&connection_id){
             return Some(&connection.peers_connected)
         }
 

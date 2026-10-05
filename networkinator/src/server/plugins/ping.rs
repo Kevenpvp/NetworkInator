@@ -53,6 +53,19 @@ pub struct PeerPings<'w> {
     server_network_stats: NetRes<'w, ServerNetworkStats>
 }
 
+impl ServerNetworkStats {
+    pub fn get_peer_from_connection_port(&self, connection_id: u32, port_id: u32, peer_id: Uuid) -> Option<&PeerNetworkStats> {
+        if let Some(hash_connection) = self.0.get(&connection_id)
+            && let Some(hash_port) = hash_connection.get(&port_id)
+            && let Some(peer_network_stats) = hash_port.get(&peer_id)
+        {
+            return Some(peer_network_stats)
+        }
+
+        None
+    }
+}
+
 #[allow(dead_code)]
 impl <'w> PeerPings<'w> {
     fn get_ping(&self, connection_id: u32, port_id: u32, peer_uuid: &Uuid) -> f32 {
