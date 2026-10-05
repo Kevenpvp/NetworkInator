@@ -582,13 +582,13 @@ pub fn check_messages_from_client(
                     
                     main_port.pong(&session_uuid, &bytes, None);
                     
-                    if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
-                        if let Some(message) = (registry.deserialize)(&message_infos.message) {
-                            let dispatch = registry.dispatch_message;
-                            let connection_id = *connection_id;
+                    if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
+                        && let Some(message) = (registry.deserialize)(&message_infos.message)
+                    {
+                        let dispatch = registry.dispatch_message;
+                        let connection_id = *connection_id;
 
-                            dispatch(&mut commands, message, connection_id, 0, peer_uuid, session_uuid);
-                        }
+                        dispatch(&mut commands, message, connection_id, 0, peer_uuid, session_uuid);
                     }
                 }
             }
@@ -607,14 +607,14 @@ pub fn check_messages_from_client(
                     
                     port.pong(&session_uuid, &bytes, None);
 
-                    if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id) {
-                        if let Some(message) = (registry.deserialize)(&message_infos.message) {
-                            let dispatch = registry.dispatch_message;
-                            let connection_id = *connection_id;
-                            let port_id = *port_id;
+                    if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
+                        && let Some(message) = (registry.deserialize)(&message_infos.message)
+                    {
+                        let dispatch = registry.dispatch_message;
+                        let connection_id = *connection_id;
+                        let port_id = *port_id;
 
-                            dispatch(&mut commands, message, connection_id, port_id, peer_uuid, session_uuid);
-                        }
+                        dispatch(&mut commands, message, connection_id, port_id, peer_uuid, session_uuid);
                     }
                 }
             }
@@ -639,13 +639,13 @@ pub fn check_messages_from_server(
                 
                 main_port.pong(&bytes, None);
 
-                if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
-                    if let Some(message) = (registry.deserialize)(&message_infos.message) {
-                        let dispatch = registry.dispatch_message;
-                        let connection_id = *connection_id;
+                if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
+                    && let Some(message) = (registry.deserialize)(&message_infos.message)
+                {
+                    let dispatch = registry.dispatch_message;
+                    let connection_id = *connection_id;
 
-                        dispatch(&mut commands, message, connection_id, 0);
-                    }
+                    dispatch(&mut commands, message, connection_id, 0);
                 }
             }
         }
@@ -660,14 +660,14 @@ pub fn check_messages_from_server(
                 
                 port.pong(&bytes, None);
 
-                if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id) {
-                    if let Some(message) = (registry.deserialize)(&message_infos.message) {
-                        let dispatch = registry.dispatch_message;
-                        let connection_id = *connection_id;
-                        let port_id = *port_id;
+                if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
+                    && let Some(message) = (registry.deserialize)(&message_infos.message)
+                {
+                    let dispatch = registry.dispatch_message;
+                    let connection_id = *connection_id;
+                    let port_id = *port_id;
 
-                        dispatch(&mut commands, message, connection_id, port_id);
-                    }
+                    dispatch(&mut commands, message, connection_id, port_id);
                 }
             }
         }
