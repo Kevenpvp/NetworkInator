@@ -3549,7 +3549,7 @@ dependencies = [
 
 [[package]]
 name = "message_pro_macro"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "postcard",
  "proc-macro2",
