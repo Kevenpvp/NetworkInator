@@ -36,7 +36,7 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
             impl MessageTrait for #name {
                 fn as_authentication(&self) -> bool { true }
 
-                fn deserialize_message(data: &[u8]) -> Option<Self> {
+                fn deserialize_message(data: &[u8]) -> Option<Self> where Self: core::marker::Sized + serde::de::DeserializeOwned {
                     match postcard::from_bytes(data) {
                         Ok(message) => Some(message),
                         Err(_) => None,
@@ -49,7 +49,7 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
             impl MessageTrait for #name {
                 fn as_authentication(&self) -> bool { false }
 
-                fn deserialize_message(data: &[u8]) -> Option<Self> {
+                fn deserialize_message(data: &[u8]) -> Option<Self> where Self: core::marker::Sized + serde::de::DeserializeOwned {
                     match postcard::from_bytes(data) {
                         Ok(message) => Some(message),
                         Err(_) => None,
