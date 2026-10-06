@@ -7,7 +7,7 @@ use bevy::log::{error};
 use bevy::prelude::{First, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin};
 use crate::{NetResMut, PeersDroppedType};
 use crate::shared::plugins::messaging::MessagingPlugin;
-use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
+use crate::shared::plugins::network::{CurrentNetworkSides, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManuallyServer, ServerConnection};
 
 pub struct ServerNetworkPlugin;
 
@@ -237,7 +237,7 @@ pub fn check_peers_disconnected(
 
 pub fn check_port_disconnected(
     mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    mut port_closed_manually: MessageReader<PortClosedManually>,
+    mut port_closed_manually: MessageReader<PortClosedManuallyServer>,
     mut server_port_disconnected: MessageWriter<ServerPortDisconnected>
 ){
     for (connection_id,server_connection) in &mut network_connection.0 {

@@ -3,7 +3,7 @@ use bevy::app::App;
 use bevy::prelude::{error, First, IntoScheduleConfigs, Message, MessageWriter, Plugin, MessageReader};
 use crate::{NetRes, NetResMut};
 use crate::shared::plugins::messaging::MessagingPlugin;
-use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSessionUUID, NetworkConnection, NetworkType, PortClosedManually, ServerConnection};
+use crate::shared::plugins::network::{ClientConnection, CurrentNetworkSides, LocalSessionUUID, NetworkConnection, NetworkType, PortClosedManuallyClient, ServerConnection};
 
 pub struct ClientNetworkPlugin;
 
@@ -147,7 +147,7 @@ pub fn ping_ports(
 pub fn check_port_disconnected(
     mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
     mut client_port_disconnected: MessageWriter<ClientPortDisconnected>,
-    mut port_closed_manually: MessageReader<PortClosedManually>
+    mut port_closed_manually: MessageReader<PortClosedManuallyClient>
 ){
     for (connection_id,client_connection) in &mut network_connection.0 {
         if let Some(main_port) = client_connection.get_port(0) {

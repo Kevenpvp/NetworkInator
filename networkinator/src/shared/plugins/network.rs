@@ -40,12 +40,24 @@ pub struct AuthenticatedInfos {
 }
 
 #[derive(Message)]
-pub struct ConnectionClosed {
-    pub connection_id: u32,
+pub struct ConnectionClosedServer {
+    pub connection_id: u32
 }
 
 #[derive(Message)]
-pub struct PortClosedManually {
+pub struct ConnectionClosedClient {
+    pub connection_id: u32
+}
+
+#[derive(Message)]
+pub struct PortClosedManuallyServer {
+    pub connection_id: u32,
+    pub port_id: u32,
+    pub was_started: bool
+}
+
+#[derive(Message)]
+pub struct PortClosedManuallyClient {
     pub connection_id: u32,
     pub port_id: u32,
     pub was_started: bool
@@ -401,9 +413,6 @@ impl Plugin for NetworkPlugin {
             )
         };
 
-        app.add_message::<PortClosedManually>();
-        app.add_message::<ConnectionClosed>();
-
         if is_client || is_local_server {
             #[cfg(target_arch = "wasm32")]
             app.init_non_send::<NetworkConnection<ClientConnection>>();
@@ -414,9 +423,16 @@ impl Plugin for NetworkPlugin {
             if is_local_server {
                 app.add_message::<PeersManuallyDropped>();
                 app.add_message::<BytesReceivedFromPeer>();
+
+                app.add_message::<PortClosedManuallyServer>();
+                app.add_message::<ConnectionClosedServer>();
+
                 #[cfg(not(target_arch = "wasm32"))]
                 app.init_resource::<NetworkConnection<ServerConnection>>();
             }
+
+            app.add_message::<PortClosedManuallyClient>();
+            app.add_message::<ConnectionClosedClient>();
 
             app.add_message::<BytesReceivedFromServer>();
             app.init_resource::<LocalSessionUUID>();
@@ -424,6 +440,10 @@ impl Plugin for NetworkPlugin {
         }else if is_dedicated_server {
             app.add_message::<PeersManuallyDropped>();
             app.add_message::<BytesReceivedFromPeer>();
+
+            app.add_message::<PortClosedManuallyServer>();
+            app.add_message::<ConnectionClosedServer>();
+
             #[cfg(not(target_arch = "wasm32"))]
             app.init_resource::<NetworkConnection<ServerConnection>>();
         }

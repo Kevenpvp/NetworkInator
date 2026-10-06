@@ -344,7 +344,7 @@ impl ServerPortTrait for TcpServerPort{
         {
             let message_infos = &MessageInfos{
                 message_id,
-                message: postcard::to_stdvec(message).unwrap(),
+                message: message.serialize_message(),
             };
 
             let buffer = match postcard::to_stdvec(message_infos) {
@@ -434,7 +434,7 @@ impl ServerPortTrait for TcpServerPort{
 
             let message_infos = &MessageInfos{
                 message_id,
-                message: postcard::to_stdvec(message).unwrap(),
+                message: message.serialize_message()
             };
 
             let buffer = match postcard::to_stdvec(message_infos) {

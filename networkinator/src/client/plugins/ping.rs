@@ -7,7 +7,7 @@ use message_pro_macro::ConnectionMessage;
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
 use crate::client::plugins::network::ClientPortDisconnected;
-use crate::shared::plugins::network::{ConnectionClosed, LocalSessionUUID};
+use crate::shared::plugins::network::{ConnectionClosedClient, LocalSessionUUID};
 
 pub struct ClientPing;
 
@@ -263,7 +263,7 @@ pub fn port_disconnected(
 }
 
 pub fn connection_closed(
-    mut connections_closed: MessageReader<ConnectionClosed>,
+    mut connections_closed: MessageReader<ConnectionClosedClient>,
     mut pings: NetResMut<Pings>,
     mut ping_ports: NetResMut<PingPorts>,
     mut server_time: NetResMut<ServerTime>

@@ -42,6 +42,10 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
                         Err(_) => None,
                     }
                 }
+                
+                fn serialize_message(&self) -> Vec<u8> where Self: core::marker::Sized + serde::Serialize {
+                    postcard::to_stdvec(self).unwrap()
+                }
             }
         }
     } else {
@@ -54,6 +58,10 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
                         Ok(message) => Some(message),
                         Err(_) => None,
                     }
+                }
+                
+                fn serialize_message(&self) -> Vec<u8> where Self: core::marker::Sized + serde::Serialize {
+                    postcard::to_stdvec(self).unwrap()
                 }
             }
         }

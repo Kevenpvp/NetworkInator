@@ -76,7 +76,6 @@ fn read_hi_message(
     }
 }
 
-
 fn main() {
     let mut app = App::new();
 

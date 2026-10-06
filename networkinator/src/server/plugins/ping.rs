@@ -8,7 +8,7 @@ use message_pro_macro::ConnectionMessage;
 use serde::{Deserialize, Serialize};
 use crate::{NetRes, NetResMut};
 use crate::server::plugins::network::{PeersDroppedServer, ServerPortDisconnected};
-use crate::shared::plugins::network::ConnectionClosed;
+use crate::shared::plugins::network::ConnectionClosedServer;
 
 pub struct ServerPing;
 
@@ -283,7 +283,7 @@ fn peer_disconnected(
 }
 
 fn connections_closed(
-    mut connections_closed: MessageReader<ConnectionClosed>,
+    mut connections_closed: MessageReader<ConnectionClosedServer>,
     mut ping_ports: NetResMut<PingPorts>,
     mut stats: NetResMut<ServerNetworkStats>
 ){

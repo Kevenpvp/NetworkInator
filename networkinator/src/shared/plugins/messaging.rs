@@ -1,10 +1,11 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::io::{Error};
+use std::marker::PhantomData;
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, MessageWriter, Messages, Resource};
+use bevy::prelude::{Commands, Event, First, IntoScheduleConfigs, Message, MessageWriter, Messages, On, Resource};
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
@@ -12,16 +13,10 @@ use serde::de::DeserializeOwned;
 use crate::{NetRes, NetResMut, PeersDroppedType};
 use crate::client::plugins::network::check_port_disconnected as client_port_disconnected;
 use crate::server::plugins::network::check_port_disconnected as server_port_disconnected;
-use crate::shared::plugins::network::{BytesReceivedFromPeer, BytesReceivedFromServer, ClientConnection, ConnectionClosed, CurrentNetworkSides, LocalPeerUUID, LocalSessionUUID, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManually, ServerConnection};
-
-#[cfg(target_arch = "wasm32")]
-type DispatchMessage = Box<dyn Any + Send>;
+use crate::shared::plugins::network::{BytesReceivedFromPeer, BytesReceivedFromServer, ClientConnection, ConnectionClosedClient, ConnectionClosedServer, CurrentNetworkSides, LocalPeerUUID, LocalSessionUUID, NetworkConnection, NetworkType, PeersManuallyDropped, PortClosedManuallyClient, PortClosedManuallyServer, ServerConnection};
 
 #[cfg(target_arch = "wasm32")]
 pub type SendArgs = Box<dyn Any + Send>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type DispatchMessage = Box<dyn Any + Send + Sync>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub type SendArgs = Box<dyn Any + Send + Sync>;
@@ -36,7 +31,8 @@ pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Syn
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MessageTrait: 'static + ErasedSerialize + ConditionalSend + Send + Sync {
-    fn deserialize_message(data: &[u8]) -> Option<Self> where Self: Sized + DeserializeOwned;
+    fn deserialize_message(data: &[u8]) -> Option<Self> where Self: Sized;
+    fn serialize_message(&self) -> Vec<u8>;
     fn as_authentication(&self) -> bool {
         false
     }
@@ -47,13 +43,11 @@ serialize_trait_object!(MessageTrait);
 pub struct MessagingPlugin;
 
 pub struct MessageFunctionsServer{
-    deserialize: fn(&[u8]) -> Option<DispatchMessage>,
-    dispatch_message: fn(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
+    dispatch_message: fn(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
 }
 
 pub struct MessageFunctionsClient{
-    deserialize: fn(&[u8]) -> Option<DispatchMessage>,
-    dispatch_message: fn(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32)
+    dispatch_message: fn(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32)
 }
 
 pub trait MessageTraitPlugin{
@@ -78,7 +72,10 @@ pub struct ServerConnectionParams<'w, 's> {
     connection: NetResMut<'w, NetworkConnection<ServerConnection>>,
     local_peer_uuid: Option<NetRes<'w, LocalPeerUUID>>,
     local_session_uuid: Option<NetRes<'w, LocalSessionUUID>>,
-    commands: Commands<'w, 's>
+    commands: Commands<'w, 's>,
+    connection_closed: MessageWriter<'w, ConnectionClosedServer>,
+    port_closed_manually: MessageWriter<'w, PortClosedManuallyServer>,
+    peers_manually_dropped: MessageWriter<'w, PeersManuallyDropped>
 }
 
 #[derive(SystemParam)]
@@ -86,7 +83,9 @@ pub struct ClientConnectionParams<'w, 's> {
     messages_registry: NetRes<'w, MessagesRegistryClient>,
     connection: NetResMut<'w, NetworkConnection<ClientConnection>>,
     local_peer_uuid: NetRes<'w, LocalPeerUUID>,
-    commands: Commands<'w, 's>
+    commands: Commands<'w, 's>,
+    connection_closed: MessageWriter<'w, ConnectionClosedClient>,
+    port_closed_manually: MessageWriter<'w, PortClosedManuallyClient>
 }
 
 #[derive(Message)]
@@ -113,45 +112,66 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
     pub connection_id: u32
 }
 
+#[derive(Event)]
+pub struct MessageTriggerFromServer<T: MessageTrait> {
+    pub message_bytes: Vec<u8>,
+    pub port_id: u32,
+    pub connection_id: u32,
+    phantom: PhantomData<T>
+}
+
+#[derive(Event)]
+pub struct MessageTriggerFromPeer<T: MessageTrait> {
+    pub message_bytes: Vec<u8>,
+    pub port_id: u32,
+    pub connection_id: u32,
+    pub peer_uuid: Option<Uuid>,
+    pub session_uuid: Uuid,
+    phantom: PhantomData<T>
+}
+
 #[allow(unused)]
 impl<'w, 's> ServerConnectionParams<'w, 's> {
     pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<&SendArgs>){
-        if let Some(local_peer_uuid) = &self.local_peer_uuid
-            && let Some(local_peer_uuid) = &local_peer_uuid.0
-        && local_peer_uuid == &peer_id
-        {
-            self.commands.write_message(MessageReceivedFromServer{
-                message,
-                port_id,
-                connection_id,
-            });
-
-            return;
-        }
-
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
+            if let Some(local_peer_uuid) = &self.local_peer_uuid
+                && let Some(local_peer_uuid) = &local_peer_uuid.0
+                && local_peer_uuid == &peer_id
+            {
+                self.commands.trigger(MessageTriggerFromServer::<T>{
+                    message_bytes: message.serialize_message(),
+                    port_id,
+                    connection_id,
+                    phantom: Default::default(),
+                });
+
+                return;
+            }
+
             self.connection.send_message(*message_id, connection_id, port_id, &message, peer_id, send_args);
         }
     }
 
     pub fn send_message_non_authenticated<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, session_uuid: Uuid, send_args: Option<&SendArgs>){
-        if let Some(local_session_uuid) = &self.local_session_uuid
-            && let Some(local_session_uuid) = &local_session_uuid.0
-            && local_session_uuid == &session_uuid
-        {
-            self.commands.write_message(MessageReceivedFromServer{
-                message,
-                port_id,
-                connection_id,
-            });
-            return;
-        }
-
         let type_id = TypeId::of::<T>();
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id) {
+            if let Some(local_session_uuid) = &self.local_session_uuid
+                && let Some(local_session_uuid) = &local_session_uuid.0
+                && local_session_uuid == &session_uuid
+            {
+                self.commands.trigger(MessageTriggerFromServer::<T>{
+                    message_bytes: message.serialize_message(),
+                    port_id,
+                    connection_id,
+                    phantom: Default::default(),
+                });
+
+                return;
+            }
+
             self.connection.send_message(*message_id, connection_id, port_id, &message, session_uuid, send_args);
         }
     }
@@ -183,10 +203,11 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             }
 
             if found_local_uuid {
-                self.commands.write_message(MessageReceivedFromServer {
-                    message,
+                self.commands.trigger(MessageTriggerFromServer::<T>{
+                    message_bytes: message.serialize_message(),
                     port_id,
                     connection_id,
+                    phantom: Default::default(),
                 });
             }
         }
@@ -204,10 +225,11 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             if let Some(local_peer_uuid) = local_peer_uuid
                 && !exceptions.contains(local_peer_uuid)
             {
-                self.commands.write_message(MessageReceivedFromServer {
-                    message,
+                self.commands.trigger(MessageTriggerFromServer::<T>{
+                    message_bytes: message.serialize_message(),
                     port_id,
                     connection_id,
+                    phantom: Default::default(),
                 });
 
                 return;
@@ -216,10 +238,11 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             if let Some(local_session_uuid) = local_session_uuid
                 && !exceptions.contains(local_session_uuid)
             {
-                self.commands.write_message(MessageReceivedFromServer {
-                    message,
+                self.commands.trigger(MessageTriggerFromServer::<T>{
+                    message_bytes: message.serialize_message(),
                     port_id,
                     connection_id,
+                    phantom: Default::default(),
                 });
             }
         }
@@ -263,19 +286,19 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 
             self.connection.close_connection(connection_id);
 
-            self.commands.write_message(ConnectionClosed {
+            self.connection_closed.write(ConnectionClosedServer {
                 connection_id
             });
 
             for (port_id, was_started) in was_connected_list.iter() {
-                self.commands.write_message(PortClosedManually{
+                self.port_closed_manually.write(PortClosedManuallyServer{
                     connection_id,
                     port_id: *port_id,
                     was_started: *was_started
                 });
 
                 if let Some(peers) = peers_list.remove(port_id) {
-                    self.commands.write_message(PeersManuallyDropped{
+                    self.peers_manually_dropped.write(PeersManuallyDropped{
                         peers,
                         connection_id,
                         port_id: *port_id
@@ -306,21 +329,17 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
 
             self.connection.close_port(connection_id, port_id);
 
-            self.commands.write_message(
-                PortClosedManually{
-                    connection_id,
-                    port_id,
-                    was_started
-                }
-            );
+            self.port_closed_manually.write(PortClosedManuallyServer{
+                connection_id,
+                port_id,
+                was_started
+            });
 
-            self.commands.write_message(
-                PeersManuallyDropped{
-                    peers,
-                    connection_id,
-                    port_id,
-                }
-            );
+           self.peers_manually_dropped.write(PeersManuallyDropped{
+               peers,
+               connection_id,
+               port_id,
+           });
         }
     }
     
@@ -328,7 +347,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
         let disconnected = self.connection.disconnect_peer_or_session(connection_id, &uuid);
 
         for (port_id,(season_uuid,peer_id)) in disconnected {
-            self.commands.write_message(PeersManuallyDropped{
+            self.peers_manually_dropped.write(PeersManuallyDropped{
                 peers: HashMap::from([
                     (season_uuid,(peer_id,Error::other("Server disconnected"),true)),
                 ]),
@@ -345,7 +364,7 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             let disconnected = port.disconnect_peer_or_session(&uuid);
             
             if let Some(disconnected) = disconnected {
-                self.commands.write_message(PeersManuallyDropped{
+                self.peers_manually_dropped.write(PeersManuallyDropped{
                     peers: HashMap::from([
                         (disconnected.0,(disconnected.1,Error::other("Server disconnected"),true)),
                     ]),
@@ -364,14 +383,15 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
 
         if let Some(message_id) = self.messages_registry.2.get(&type_id)
             && self.connection.send_message_to_server(*message_id, connection_id, port_id, &message, local_session_uuid, send_args)
-            && let Some(local_peer_uuid) = self.local_peer_uuid.0 && let Some(local_session_uuid) = local_session_uuid {
+            && let Some(local_session_uuid) = local_session_uuid {
 
-            self.commands.write_message(MessageReceivedFromPeer{
-                message,
-                peer_uuid: local_peer_uuid,
-                session_uuid: local_session_uuid,
+            self.commands.trigger(MessageTriggerFromPeer::<T>{
+                message_bytes: message.serialize_message(),
                 port_id,
                 connection_id,
+                peer_uuid: self.local_peer_uuid.0,
+                session_uuid: local_session_uuid,
+                phantom: Default::default(),
             });
         }
     }
@@ -395,12 +415,12 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
 
             self.connection.close_connection(connection_id);
 
-            self.commands.write_message(ConnectionClosed {
+            self.connection_closed.write(ConnectionClosedClient {
                 connection_id
             });
 
             for (port_id, was_started) in was_connected_list.iter() {
-                self.commands.write_message(PortClosedManually{
+                self.port_closed_manually.write(PortClosedManuallyClient{
                     connection_id,
                     port_id: *port_id,
                     was_started: *was_started
@@ -423,7 +443,7 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
 
             self.connection.close_port(connection_id, port_id);
 
-            self.commands.write_message(PortClosedManually{
+            self.port_closed_manually.write(PortClosedManuallyClient{
                 connection_id,
                 port_id,
                 was_started
@@ -452,6 +472,7 @@ impl Plugin for MessagingPlugin {
 
             if is_local_server {
                 app.init_resource::<MessagesRegistryServer>();
+
                 app.add_systems(First,check_messages_from_client.after(server_port_disconnected));
             }
         }else if is_dedicated_server {
@@ -480,6 +501,19 @@ impl MessageTraitPlugin for App {
         if is_client || is_local_server {
             if self.world().get_resource::<Messages<MessageReceivedFromServer<T>>>().is_none() {
                 self.add_message::<MessageReceivedFromServer<T>>();
+
+                self.add_observer(|
+                    message_trigger_from_server: On<MessageTriggerFromServer<T>>,
+                    mut message_received_from_server: MessageWriter<MessageReceivedFromServer<T>>
+                | {
+                    if let Some(message) = T::deserialize_message(&message_trigger_from_server.message_bytes) {
+                        message_received_from_server.write(MessageReceivedFromServer{
+                            message,
+                            port_id: message_trigger_from_server.port_id,
+                            connection_id: message_trigger_from_server.connection_id
+                        });
+                    }
+                });
             }else {
                 found_message_client = true;
             }
@@ -488,6 +522,31 @@ impl MessageTraitPlugin for App {
                 if self.world().get_resource::<Messages<MessageReceivedFromPeer<T>>>().is_none() {
                     self.add_message::<MessageReceivedFromPeer<T>>();
                     self.add_message::<MessageReceivedFromAnonymousPeer<T>>();
+
+                    self.add_observer(|
+                        message_trigger_from_server: On<MessageTriggerFromPeer<T>>,
+                        mut message_received_from_peer: MessageWriter<MessageReceivedFromPeer<T>>,
+                        mut message_received_from_anonymous_peer: MessageWriter<MessageReceivedFromAnonymousPeer<T>>,
+                    | {
+                        if let Some(message) = T::deserialize_message(&message_trigger_from_server.message_bytes) {
+                            if let Some(peer_uuid) = message_trigger_from_server.peer_uuid {
+                                message_received_from_peer.write(MessageReceivedFromPeer{
+                                    message,
+                                    peer_uuid,
+                                    session_uuid: message_trigger_from_server.session_uuid,
+                                    port_id: message_trigger_from_server.port_id,
+                                    connection_id: message_trigger_from_server.connection_id,
+                                });
+                            }else {
+                                message_received_from_anonymous_peer.write(MessageReceivedFromAnonymousPeer{
+                                    message,
+                                    session_uuid: message_trigger_from_server.session_uuid,
+                                    port_id: message_trigger_from_server.port_id,
+                                    connection_id: message_trigger_from_server.connection_id,
+                                });
+                            }
+                        }
+                    });
                 }else {
                     found_message_server = true;
                 }
@@ -496,6 +555,31 @@ impl MessageTraitPlugin for App {
             if self.world().get_resource::<Messages<MessageReceivedFromPeer<T>>>().is_none() {
                 self.add_message::<MessageReceivedFromPeer<T>>();
                 self.add_message::<MessageReceivedFromAnonymousPeer<T>>();
+
+                self.add_observer(|
+                    message_trigger_from_server: On<MessageTriggerFromPeer<T>>,
+                    mut message_received_from_peer: MessageWriter<MessageReceivedFromPeer<T>>,
+                    mut message_received_from_anonymous_peer: MessageWriter<MessageReceivedFromAnonymousPeer<T>>,
+                | {
+                    if let Some(message) = T::deserialize_message(&message_trigger_from_server.message_bytes) {
+                        if let Some(peer_uuid) = message_trigger_from_server.peer_uuid {
+                            message_received_from_peer.write(MessageReceivedFromPeer{
+                                message,
+                                peer_uuid,
+                                session_uuid: message_trigger_from_server.session_uuid,
+                                port_id: message_trigger_from_server.port_id,
+                                connection_id: message_trigger_from_server.connection_id,
+                            });
+                        }else {
+                            message_received_from_anonymous_peer.write(MessageReceivedFromAnonymousPeer{
+                                message,
+                                session_uuid: message_trigger_from_server.session_uuid,
+                                port_id: message_trigger_from_server.port_id,
+                                connection_id: message_trigger_from_server.connection_id,
+                            });
+                        }
+                    }
+                });
             }else {
                 found_message_server = true;
             }
@@ -514,8 +598,7 @@ impl MessageTraitPlugin for App {
                 msg_registry.0 = new_value;
 
                 msg_registry.1.insert(new_value, MessageFunctionsClient{
-                    deserialize: deserialize_message::<T>,
-                    dispatch_message: dispatch_message_client::<T>,
+                    dispatch_message: dispatch_message_client::<T>
                 });
 
                 msg_registry.2.insert(type_id,new_value);
@@ -534,8 +617,7 @@ impl MessageTraitPlugin for App {
                     msg_registry.0 = new_value;
 
                     msg_registry.1.insert(new_value, MessageFunctionsServer{
-                        deserialize: deserialize_message::<T>,
-                        dispatch_message: dispatch_message_server::<T>,
+                        dispatch_message: dispatch_message_server::<T>
                     });
 
                     msg_registry.2.insert(type_id,new_value);
@@ -553,8 +635,7 @@ impl MessageTraitPlugin for App {
             msg_registry.0 = new_value;
 
             msg_registry.1.insert(new_value, MessageFunctionsServer{
-                deserialize: deserialize_message::<T>,
-                dispatch_message: dispatch_message_server::<T>,
+                dispatch_message: dispatch_message_server::<T>
             });
 
             msg_registry.2.insert(type_id,new_value);
@@ -583,12 +664,11 @@ pub fn check_messages_from_client(
                     main_port.pong(&session_uuid, &bytes, None);
                     
                     if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
-                        && let Some(message) = (registry.deserialize)(&message_infos.message)
                     {
                         let dispatch = registry.dispatch_message;
                         let connection_id = *connection_id;
 
-                        dispatch(&mut commands, message, connection_id, 0, peer_uuid, session_uuid);
+                        dispatch(&mut commands, message_infos.message, connection_id, 0, peer_uuid, session_uuid);
                     }
                 }
             }
@@ -608,13 +688,12 @@ pub fn check_messages_from_client(
                     port.pong(&session_uuid, &bytes, None);
 
                     if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
-                        && let Some(message) = (registry.deserialize)(&message_infos.message)
                     {
                         let dispatch = registry.dispatch_message;
                         let connection_id = *connection_id;
                         let port_id = *port_id;
 
-                        dispatch(&mut commands, message, connection_id, port_id, peer_uuid, session_uuid);
+                        dispatch(&mut commands, message_infos.message, connection_id, port_id, peer_uuid, session_uuid);
                     }
                 }
             }
@@ -640,12 +719,11 @@ pub fn check_messages_from_server(
                 main_port.pong(&bytes, None);
 
                 if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
-                    && let Some(message) = (registry.deserialize)(&message_infos.message)
                 {
                     let dispatch = registry.dispatch_message;
                     let connection_id = *connection_id;
 
-                    dispatch(&mut commands, message, connection_id, 0);
+                    dispatch(&mut commands, message_infos.message, connection_id, 0);
                 }
             }
         }
@@ -661,58 +739,35 @@ pub fn check_messages_from_server(
                 port.pong(&bytes, None);
 
                 if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
-                    && let Some(message) = (registry.deserialize)(&message_infos.message)
                 {
                     let dispatch = registry.dispatch_message;
                     let connection_id = *connection_id;
                     let port_id = *port_id;
 
-                    dispatch(&mut commands, message, connection_id, port_id);
+                    dispatch(&mut commands, message_infos.message, connection_id, port_id);
                 }
             }
         }
     }
 }
 
-fn deserialize_message<T: MessageTrait + DeserializeOwned>(bytes: &[u8]) -> Option<DispatchMessage> {
-    if let Some(message) = T::deserialize_message(bytes) {
-        return Some(Box::new(message))
-    }
-
-    None
-}
-
-fn dispatch_message_server<T: MessageTrait>(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid)  {
-    let message = match  message.downcast::<T>(){
-        Ok(message) => message,
-        Err(error) => { println!("Failed to downcast message type: {:?}", error); return; }
-    };
-
-    if let Some(peer_uuid) = peer_uuid{
-        commands.write_message(MessageReceivedFromPeer {
-            message: *message,
-            peer_uuid,
-            session_uuid: session_id,
-            port_id,
-            connection_id,
-        });
-    }else {
-        commands.write_message(MessageReceivedFromAnonymousPeer {
-            message: *message,
-            session_uuid: session_id,
-            port_id,
-            connection_id,
-        });
-    }
-}
-
-fn dispatch_message_client<T: MessageTrait>(commands: &mut Commands, message: DispatchMessage, connection_id: u32, port_id: u32)  {
-    let message = message.downcast::<T>().expect("Failed to downcast");
-
-    commands.write_message(MessageReceivedFromServer{
-        message: *message,
+fn dispatch_message_server<T: MessageTrait>(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_uuid: Uuid)  {
+    commands.trigger(MessageTriggerFromPeer::<T>{
+        message_bytes,
         port_id,
         connection_id,
+        peer_uuid,
+        session_uuid,
+        phantom: Default::default(),
+    });
+}
+
+fn dispatch_message_client<T: MessageTrait>(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32)  {
+    commands.trigger(MessageTriggerFromServer::<T>{
+        message_bytes,
+        port_id,
+        connection_id,
+        phantom: Default::default()
     });
 }
 

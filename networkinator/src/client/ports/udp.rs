@@ -246,7 +246,7 @@ impl ClientPortTrait for UdpClientPort {
         {
             let message_infos = &MessageInfos{
                 message_id,
-                message: postcard::to_stdvec(message).unwrap(),
+                message: message.serialize_message(),
             };
 
             let mut buffer = match postcard::to_stdvec(message_infos) {
