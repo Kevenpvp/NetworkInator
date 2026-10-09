@@ -608,7 +608,7 @@ pub fn check_messages_from_client(
                                 let dispatch = registry.dispatch_message;
                                 let connection_id = *connection_id;
 
-                                dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, 0, peer_uuid, session_uuid);
+                                dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, 0, peer_uuid, session_uuid);
                             }
                         }
                     }
@@ -633,7 +633,7 @@ pub fn check_messages_from_client(
                                 let connection_id = *connection_id;
                                 let port_id = *port_id;
 
-                                dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id, peer_uuid, session_uuid);
+                                dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id, peer_uuid, session_uuid);
                             }
                         }
                     }
@@ -674,7 +674,7 @@ pub fn check_messages_from_server(
                             let dispatch = registry.dispatch_message;
                             let connection_id = *connection_id;
 
-                            dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, 0);
+                            dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, 0);
                         }
                     }
                 }
@@ -695,7 +695,7 @@ pub fn check_messages_from_server(
                             let connection_id = *connection_id;
                             let port_id = *port_id;
 
-                            dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id);
+                            dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id);
                         }
                     }
                 }
