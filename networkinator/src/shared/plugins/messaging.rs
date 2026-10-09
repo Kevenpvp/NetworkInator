@@ -1,11 +1,10 @@
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Error};
-use std::marker::PhantomData;
 use bevy::app::{App, Plugin};
 use bevy::asset::uuid::Uuid;
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::{Commands, Event, First, IntoScheduleConfigs, Message, MessageWriter, Messages, On, Resource};
+use bevy::prelude::{Commands, First, IntoScheduleConfigs, Message, MessageWriter, Messages, Resource, World};
 use bevy::tasks::ConditionalSend;
 use erased_serde::{serialize_trait_object, Serialize as ErasedSerialize};
 use serde::{Deserialize, Serialize};
@@ -43,11 +42,11 @@ serialize_trait_object!(MessageTrait);
 pub struct MessagingPlugin;
 
 pub struct MessageFunctionsServer{
-    dispatch_message: fn(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
+    dispatch_message: fn(world: &mut World, message_bytes: &[u8], connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_id: Uuid),
 }
 
 pub struct MessageFunctionsClient{
-    dispatch_message: fn(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32)
+    dispatch_message: fn(world: &mut World, message_bytes: &[u8], connection_id: u32, port_id: u32)
 }
 
 pub trait MessageTraitPlugin{
@@ -112,24 +111,6 @@ pub struct MessageReceivedFromServer<T: MessageTrait>{
     pub connection_id: u32
 }
 
-#[derive(Event)]
-pub struct MessageTriggerFromServer<T: MessageTrait> {
-    pub message_bytes: Vec<u8>,
-    pub port_id: u32,
-    pub connection_id: u32,
-    phantom: PhantomData<T>
-}
-
-#[derive(Event)]
-pub struct MessageTriggerFromPeer<T: MessageTrait> {
-    pub message_bytes: Vec<u8>,
-    pub port_id: u32,
-    pub connection_id: u32,
-    pub peer_uuid: Option<Uuid>,
-    pub session_uuid: Uuid,
-    phantom: PhantomData<T>
-}
-
 #[allow(unused)]
 impl<'w, 's> ServerConnectionParams<'w, 's> {
     pub fn send_message<T: MessageTrait>(&mut self, connection_id: u32, port_id: u32, message: T, peer_id: Uuid, send_args: Option<&SendArgs>){
@@ -140,11 +121,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
                 && let Some(local_peer_uuid) = &local_peer_uuid.0
                 && local_peer_uuid == &peer_id
             {
-                self.commands.trigger(MessageTriggerFromServer::<T>{
-                    message_bytes: message.serialize_message(),
-                    port_id,
-                    connection_id,
-                    phantom: Default::default(),
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromServer{
+                        message,
+                        port_id,
+                        connection_id,
+                    });
                 });
 
                 return;
@@ -162,11 +144,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
                 && let Some(local_session_uuid) = &local_session_uuid.0
                 && local_session_uuid == &session_uuid
             {
-                self.commands.trigger(MessageTriggerFromServer::<T>{
-                    message_bytes: message.serialize_message(),
-                    port_id,
-                    connection_id,
-                    phantom: Default::default(),
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromServer{
+                        message,
+                        port_id,
+                        connection_id,
+                    });
                 });
 
                 return;
@@ -203,11 +186,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             }
 
             if found_local_uuid {
-                self.commands.trigger(MessageTriggerFromServer::<T>{
-                    message_bytes: message.serialize_message(),
-                    port_id,
-                    connection_id,
-                    phantom: Default::default(),
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromServer{
+                        message,
+                        port_id,
+                        connection_id,
+                    });
                 });
             }
         }
@@ -225,11 +209,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             if let Some(local_peer_uuid) = local_peer_uuid
                 && !exceptions.contains(local_peer_uuid)
             {
-                self.commands.trigger(MessageTriggerFromServer::<T>{
-                    message_bytes: message.serialize_message(),
-                    port_id,
-                    connection_id,
-                    phantom: Default::default(),
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromServer{
+                        message,
+                        port_id,
+                        connection_id,
+                    });
                 });
 
                 return;
@@ -238,11 +223,12 @@ impl<'w, 's> ServerConnectionParams<'w, 's> {
             if let Some(local_session_uuid) = local_session_uuid
                 && !exceptions.contains(local_session_uuid)
             {
-                self.commands.trigger(MessageTriggerFromServer::<T>{
-                    message_bytes: message.serialize_message(),
-                    port_id,
-                    connection_id,
-                    phantom: Default::default(),
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromServer{
+                        message,
+                        port_id,
+                        connection_id,
+                    });
                 });
             }
         }
@@ -385,14 +371,26 @@ impl<'w, 's> ClientConnectionParams<'w, 's> {
             && self.connection.send_message_to_server(*message_id, connection_id, port_id, &message, local_session_uuid, send_args)
             && let Some(local_session_uuid) = local_session_uuid {
 
-            self.commands.trigger(MessageTriggerFromPeer::<T>{
-                message_bytes: message.serialize_message(),
-                port_id,
-                connection_id,
-                peer_uuid: self.local_peer_uuid.0,
-                session_uuid: local_session_uuid,
-                phantom: Default::default(),
-            });
+            if let Some(peer_uuid) = self.local_peer_uuid.0 {
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromPeer{
+                        message,
+                        peer_uuid,
+                        session_uuid: local_session_uuid,
+                        port_id,
+                        connection_id
+                    });
+                });
+            }else {
+                self.commands.queue(move |world: &mut World|{
+                    world.write_message(MessageReceivedFromAnonymousPeer{
+                        message,
+                        session_uuid: local_session_uuid,
+                        port_id,
+                        connection_id
+                    });
+                });
+            }
         }
     }
 
@@ -501,19 +499,6 @@ impl MessageTraitPlugin for App {
         if is_client || is_local_server {
             if self.world().get_resource::<Messages<MessageReceivedFromServer<T>>>().is_none() {
                 self.add_message::<MessageReceivedFromServer<T>>();
-
-                self.add_observer(|
-                    message_trigger_from_server: On<MessageTriggerFromServer<T>>,
-                    mut message_received_from_server: MessageWriter<MessageReceivedFromServer<T>>
-                | {
-                    if let Some(message) = T::deserialize_message(&message_trigger_from_server.message_bytes) {
-                        message_received_from_server.write(MessageReceivedFromServer{
-                            message,
-                            port_id: message_trigger_from_server.port_id,
-                            connection_id: message_trigger_from_server.connection_id
-                        });
-                    }
-                });
             }else {
                 found_message_client = true;
             }
@@ -522,31 +507,6 @@ impl MessageTraitPlugin for App {
                 if self.world().get_resource::<Messages<MessageReceivedFromPeer<T>>>().is_none() {
                     self.add_message::<MessageReceivedFromPeer<T>>();
                     self.add_message::<MessageReceivedFromAnonymousPeer<T>>();
-
-                    self.add_observer(|
-                        message_trigger_from_server: On<MessageTriggerFromPeer<T>>,
-                        mut message_received_from_peer: MessageWriter<MessageReceivedFromPeer<T>>,
-                        mut message_received_from_anonymous_peer: MessageWriter<MessageReceivedFromAnonymousPeer<T>>,
-                    | {
-                        if let Some(message) = T::deserialize_message(&message_trigger_from_server.message_bytes) {
-                            if let Some(peer_uuid) = message_trigger_from_server.peer_uuid {
-                                message_received_from_peer.write(MessageReceivedFromPeer{
-                                    message,
-                                    peer_uuid,
-                                    session_uuid: message_trigger_from_server.session_uuid,
-                                    port_id: message_trigger_from_server.port_id,
-                                    connection_id: message_trigger_from_server.connection_id,
-                                });
-                            }else {
-                                message_received_from_anonymous_peer.write(MessageReceivedFromAnonymousPeer{
-                                    message,
-                                    session_uuid: message_trigger_from_server.session_uuid,
-                                    port_id: message_trigger_from_server.port_id,
-                                    connection_id: message_trigger_from_server.connection_id,
-                                });
-                            }
-                        }
-                    });
                 }else {
                     found_message_server = true;
                 }
@@ -555,31 +515,6 @@ impl MessageTraitPlugin for App {
             if self.world().get_resource::<Messages<MessageReceivedFromPeer<T>>>().is_none() {
                 self.add_message::<MessageReceivedFromPeer<T>>();
                 self.add_message::<MessageReceivedFromAnonymousPeer<T>>();
-
-                self.add_observer(|
-                    message_trigger_from_server: On<MessageTriggerFromPeer<T>>,
-                    mut message_received_from_peer: MessageWriter<MessageReceivedFromPeer<T>>,
-                    mut message_received_from_anonymous_peer: MessageWriter<MessageReceivedFromAnonymousPeer<T>>,
-                | {
-                    if let Some(message) = T::deserialize_message(&message_trigger_from_server.message_bytes) {
-                        if let Some(peer_uuid) = message_trigger_from_server.peer_uuid {
-                            message_received_from_peer.write(MessageReceivedFromPeer{
-                                message,
-                                peer_uuid,
-                                session_uuid: message_trigger_from_server.session_uuid,
-                                port_id: message_trigger_from_server.port_id,
-                                connection_id: message_trigger_from_server.connection_id,
-                            });
-                        }else {
-                            message_received_from_anonymous_peer.write(MessageReceivedFromAnonymousPeer{
-                                message,
-                                session_uuid: message_trigger_from_server.session_uuid,
-                                port_id: message_trigger_from_server.port_id,
-                                connection_id: message_trigger_from_server.connection_id,
-                            });
-                        }
-                    }
-                });
             }else {
                 found_message_server = true;
             }
@@ -644,131 +579,160 @@ impl MessageTraitPlugin for App {
 }
 
 pub fn check_messages_from_client(
-    mut network_connection: NetResMut<NetworkConnection<ServerConnection>>,
-    messages_registry_server: NetRes<MessagesRegistryServer>,
-    mut commands: Commands,
-    mut bytes_received_from_peer: MessageWriter<BytesReceivedFromPeer>
+    mut commands: Commands
 ){
-    for (connection_id,connection) in network_connection.0.iter_mut(){
-        if let Some(main_port) = connection.get_port(0){
-            for (session_uuid, (messages, peer_uuid)) in main_port.get_peers_messages() {
-                for bytes in messages {
-                    bytes_received_from_peer.write(BytesReceivedFromPeer{
-                        peer_season_uuid: session_uuid,
-                        peer_id: peer_uuid,
-                        connection_id: *connection_id,
-                        port_id: 0,
-                        bytes_length: bytes.len(),
-                    });
-                    
-                    main_port.pong(&session_uuid, &bytes, None);
-                    
-                    if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
-                    {
-                        let dispatch = registry.dispatch_message;
-                        let connection_id = *connection_id;
+    commands.queue(move |world: &mut World|{
+        let unsafe_cell = world.as_unsafe_world_cell();
+        let mut bytes_queue= VecDeque::new();
 
-                        dispatch(&mut commands, message_infos.message, connection_id, 0, peer_uuid, session_uuid);
+        unsafe {
+            let messages_registry_server = unsafe_cell.get_resource::<MessagesRegistryServer>().unwrap();
+            let mut network_connection = unsafe_cell.get_resource_mut::<NetworkConnection<ServerConnection>>().unwrap();
+
+            for (connection_id,connection) in network_connection.0.iter_mut(){
+                if let Some(main_port) = connection.get_port(0){
+                    for (session_uuid, (messages, peer_uuid)) in main_port.get_peers_messages() {
+                        for bytes in messages {
+                            bytes_queue.push_back(BytesReceivedFromPeer{
+                                peer_season_uuid: session_uuid,
+                                peer_id: peer_uuid,
+                                connection_id: *connection_id,
+                                port_id: 0,
+                                bytes_length: bytes.len(),
+                            });
+
+                            main_port.pong(&session_uuid, &bytes, None);
+
+                            if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
+                            {
+                                let dispatch = registry.dispatch_message;
+                                let connection_id = *connection_id;
+
+                                dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, 0, peer_uuid, session_uuid);
+                            }
+                        }
+                    }
+                }
+
+                for (port_id,port) in connection.get_secondary_ports().iter_mut() {
+                    for (session_uuid, (messages, peer_uuid)) in port.get_peers_messages() {
+                        for bytes in messages {
+                            bytes_queue.push_back(BytesReceivedFromPeer{
+                                peer_season_uuid: session_uuid,
+                                peer_id: peer_uuid,
+                                connection_id: *connection_id,
+                                port_id: *port_id,
+                                bytes_length: bytes.len(),
+                            });
+
+                            port.pong(&session_uuid, &bytes, None);
+
+                            if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
+                            {
+                                let dispatch = registry.dispatch_message;
+                                let connection_id = *connection_id;
+                                let port_id = *port_id;
+
+                                dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id, peer_uuid, session_uuid);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        for (port_id,port) in connection.get_secondary_ports().iter_mut() {
-            for (session_uuid, (messages, peer_uuid)) in port.get_peers_messages() {
-                for bytes in messages {
-                    bytes_received_from_peer.write(BytesReceivedFromPeer{
-                        peer_season_uuid: session_uuid,
-                        peer_id: peer_uuid,
-                        connection_id: *connection_id,
-                        port_id: *port_id,
-                        bytes_length: bytes.len(),
-                    });
-                    
-                    port.pong(&session_uuid, &bytes, None);
-
-                    if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
-                    {
-                        let dispatch = registry.dispatch_message;
-                        let connection_id = *connection_id;
-                        let port_id = *port_id;
-
-                        dispatch(&mut commands, message_infos.message, connection_id, port_id, peer_uuid, session_uuid);
-                    }
-                }
-            }
+        while let Some(bytes) = bytes_queue.pop_front() {
+            world.write_message(bytes);
         }
-    }
+    });
 }
 
 pub fn check_messages_from_server(
-    mut network_connection: NetResMut<NetworkConnection<ClientConnection>>,
-    messages_registry_client: NetRes<MessagesRegistryClient>,
-    mut commands: Commands,
-    mut bytes_received_from_server: MessageWriter<BytesReceivedFromServer>
+    mut commands: Commands
 ){
-    for (connection_id,connection) in network_connection.0.iter_mut(){
-        if let Some(main_port) = connection.get_port(0){
-            for bytes in main_port.get_server_messages() {
-                bytes_received_from_server.write(BytesReceivedFromServer{
-                    connection_id: *connection_id,
-                    port_id: 0,
-                    bytes_length: bytes.len(),
-                });
-                
-                main_port.pong(&bytes, None);
+    commands.queue(move |world: &mut World|{
+        let unsafe_cell = world.as_unsafe_world_cell();
+        let mut bytes_queue= VecDeque::new();
 
-                if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
-                {
-                    let dispatch = registry.dispatch_message;
-                    let connection_id = *connection_id;
+        unsafe {
+            let messages_registry_client = unsafe_cell.get_resource::<MessagesRegistryClient>().unwrap();
+            let mut network_connection = unsafe_cell.get_resource_mut::<NetworkConnection<ClientConnection>>().unwrap();
 
-                    dispatch(&mut commands, message_infos.message, connection_id, 0);
+            for (connection_id,connection) in network_connection.0.iter_mut(){
+                if let Some(main_port) = connection.get_port(0){
+                    for bytes in main_port.get_server_messages() {
+                        bytes_queue.push_back(BytesReceivedFromServer{
+                            connection_id: *connection_id,
+                            port_id: 0,
+                            bytes_length: bytes.len(),
+                        });
+
+                        main_port.pong(&bytes, None);
+
+                        if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
+                        {
+                            let dispatch = registry.dispatch_message;
+                            let connection_id = *connection_id;
+
+                            dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, 0);
+                        }
+                    }
+                }
+
+                for (port_id,port) in connection.get_secondary_ports().iter_mut() {
+                    for bytes in port.get_server_messages() {
+                        bytes_queue.push_back(BytesReceivedFromServer{
+                            connection_id: *connection_id,
+                            port_id: *port_id,
+                            bytes_length: bytes.len(),
+                        });
+
+                        port.pong(&bytes, None);
+
+                        if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
+                        {
+                            let dispatch = registry.dispatch_message;
+                            let connection_id = *connection_id;
+                            let port_id = *port_id;
+
+                            dispatch(&mut unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id);
+                        }
+                    }
                 }
             }
         }
+    });
+}
 
-        for (port_id,port) in connection.get_secondary_ports().iter_mut() {
-            for bytes in port.get_server_messages() {
-                bytes_received_from_server.write(BytesReceivedFromServer{
-                    connection_id: *connection_id,
-                    port_id: *port_id,
-                    bytes_length: bytes.len(),
-                });
-                
-                port.pong(&bytes, None);
-
-                if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
-                {
-                    let dispatch = registry.dispatch_message;
-                    let connection_id = *connection_id;
-                    let port_id = *port_id;
-
-                    dispatch(&mut commands, message_infos.message, connection_id, port_id);
-                }
-            }
+fn dispatch_message_server<T: MessageTrait>(world: &mut World, message_bytes: &[u8], connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_uuid: Uuid)  {
+    if let Some(message) = T::deserialize_message(message_bytes) {
+        if let Some(peer_uuid) = peer_uuid {
+            world.write_message(MessageReceivedFromPeer{
+                message,
+                peer_uuid,
+                session_uuid,
+                port_id,
+                connection_id
+            });
+        }else {
+            world.write_message(MessageReceivedFromAnonymousPeer{
+                message,
+                session_uuid,
+                port_id,
+                connection_id
+            });
         }
     }
 }
 
-fn dispatch_message_server<T: MessageTrait>(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32, peer_uuid: Option<Uuid>, session_uuid: Uuid)  {
-    commands.trigger(MessageTriggerFromPeer::<T>{
-        message_bytes,
-        port_id,
-        connection_id,
-        peer_uuid,
-        session_uuid,
-        phantom: Default::default(),
-    });
-}
-
-fn dispatch_message_client<T: MessageTrait>(commands: &mut Commands, message_bytes: Vec<u8>, connection_id: u32, port_id: u32)  {
-    commands.trigger(MessageTriggerFromServer::<T>{
-        message_bytes,
-        port_id,
-        connection_id,
-        phantom: Default::default()
-    });
+fn dispatch_message_client<T: MessageTrait>(world: &mut World, message_bytes: &[u8], connection_id: u32, port_id: u32)  {
+    if let Some(message) = T::deserialize_message(message_bytes) {
+        world.write_message(MessageReceivedFromServer{
+            message,
+            port_id,
+            connection_id,
+        });
+    }
 }
 
 impl MessagesRegistryServer {
