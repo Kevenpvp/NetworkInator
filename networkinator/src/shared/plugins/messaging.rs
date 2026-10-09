@@ -582,64 +582,93 @@ pub fn check_messages_from_client(
     mut commands: Commands
 ){
     commands.queue(move |world: &mut World|{
-        let unsafe_cell = world.as_unsafe_world_cell();
         let mut bytes_queue= VecDeque::new();
 
-        unsafe {
-            let messages_registry_server = unsafe_cell.get_resource::<MessagesRegistryServer>().unwrap();
-            let mut network_connection = unsafe_cell.get_resource_mut::<NetworkConnection<ServerConnection>>().unwrap();
+        world.resource_scope::<NetworkConnection<ServerConnection>, _>(
+            |world, mut network_connection| {
+                for (connection_id,connection) in network_connection.0.iter_mut(){
+                    if let Some(main_port) = connection.get_port(0){
+                        for (session_uuid, (messages, peer_uuid)) in main_port.get_peers_messages() {
+                            for bytes in messages {
+                                bytes_queue.push_back(BytesReceivedFromPeer{
+                                    peer_season_uuid: session_uuid,
+                                    peer_id: peer_uuid,
+                                    connection_id: *connection_id,
+                                    port_id: 0,
+                                    bytes_length: bytes.len(),
+                                });
 
-            for (connection_id,connection) in network_connection.0.iter_mut(){
-                if let Some(main_port) = connection.get_port(0){
-                    for (session_uuid, (messages, peer_uuid)) in main_port.get_peers_messages() {
-                        for bytes in messages {
-                            bytes_queue.push_back(BytesReceivedFromPeer{
-                                peer_season_uuid: session_uuid,
-                                peer_id: peer_uuid,
-                                connection_id: *connection_id,
-                                port_id: 0,
-                                bytes_length: bytes.len(),
-                            });
+                                main_port.pong(&session_uuid, &bytes, None);
 
-                            main_port.pong(&session_uuid, &bytes, None);
+                                if let Some(message_infos) = main_port.deserialize_message_infos(bytes)
+                                {
+                                    let dispatch = {
+                                        let registry =
+                                            world.resource::<MessagesRegistryServer>();
 
-                            if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
-                            {
-                                let dispatch = registry.dispatch_message;
-                                let connection_id = *connection_id;
+                                        registry
+                                            .1
+                                            .get(&message_infos.message_id)
+                                            .map(|entry| entry.dispatch_message)
+                                    };
 
-                                dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, 0, peer_uuid, session_uuid);
+                                    if let Some(dispatch) = dispatch {
+                                        dispatch(
+                                            world,
+                                            &message_infos.message,
+                                            *connection_id,
+                                            0,
+                                            peer_uuid,
+                                            session_uuid,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                for (port_id,port) in connection.get_secondary_ports().iter_mut() {
-                    for (session_uuid, (messages, peer_uuid)) in port.get_peers_messages() {
-                        for bytes in messages {
-                            bytes_queue.push_back(BytesReceivedFromPeer{
-                                peer_season_uuid: session_uuid,
-                                peer_id: peer_uuid,
-                                connection_id: *connection_id,
-                                port_id: *port_id,
-                                bytes_length: bytes.len(),
-                            });
+                    for (port_id,port) in connection.get_secondary_ports().iter_mut() {
+                        for (session_uuid, (messages, peer_uuid)) in port.get_peers_messages() {
+                            for bytes in messages {
+                                bytes_queue.push_back(BytesReceivedFromPeer{
+                                    peer_season_uuid: session_uuid,
+                                    peer_id: peer_uuid,
+                                    connection_id: *connection_id,
+                                    port_id: *port_id,
+                                    bytes_length: bytes.len(),
+                                });
 
-                            port.pong(&session_uuid, &bytes, None);
+                                port.pong(&session_uuid, &bytes, None);
 
-                            if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_server.1.get(&message_infos.message_id)
-                            {
-                                let dispatch = registry.dispatch_message;
-                                let connection_id = *connection_id;
-                                let port_id = *port_id;
+                                if let Some(message_infos) = port.deserialize_message_infos(bytes)
+                                {
+                                    let dispatch = {
+                                        let registry =
+                                            world.resource::<MessagesRegistryServer>();
 
-                                dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id, peer_uuid, session_uuid);
+                                        registry
+                                            .1
+                                            .get(&message_infos.message_id)
+                                            .map(|entry| entry.dispatch_message)
+                                    };
+
+                                    if let Some(dispatch) = dispatch {
+                                        dispatch(
+                                            world,
+                                            &message_infos.message,
+                                            *connection_id,
+                                            *port_id,
+                                            peer_uuid,
+                                            session_uuid,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
+        );
 
         while let Some(bytes) = bytes_queue.pop_front() {
             world.write_message(bytes);
@@ -651,55 +680,83 @@ pub fn check_messages_from_server(
     mut commands: Commands
 ){
     commands.queue(move |world: &mut World|{
-        let unsafe_cell = world.as_unsafe_world_cell();
         let mut bytes_queue= VecDeque::new();
 
-        unsafe {
-            let messages_registry_client = unsafe_cell.get_resource::<MessagesRegistryClient>().unwrap();
-            let mut network_connection = unsafe_cell.get_resource_mut::<NetworkConnection<ClientConnection>>().unwrap();
+        world.resource_scope::<NetworkConnection<ClientConnection>, _>(
+            |world, mut network_connection| {
+                for (connection_id,connection) in network_connection.0.iter_mut(){
+                    if let Some(main_port) = connection.get_port(0){
+                        for bytes in main_port.get_server_messages() {
+                            bytes_queue.push_back(BytesReceivedFromServer{
+                                connection_id: *connection_id,
+                                port_id: 0,
+                                bytes_length: bytes.len(),
+                            });
 
-            for (connection_id,connection) in network_connection.0.iter_mut(){
-                if let Some(main_port) = connection.get_port(0){
-                    for bytes in main_port.get_server_messages() {
-                        bytes_queue.push_back(BytesReceivedFromServer{
-                            connection_id: *connection_id,
-                            port_id: 0,
-                            bytes_length: bytes.len(),
-                        });
+                            main_port.pong(&bytes, None);
 
-                        main_port.pong(&bytes, None);
+                            if let Some(message_infos) = main_port.deserialize_message_infos(bytes)
+                            {
+                                let dispatch = {
+                                    let registry =
+                                        world.resource::<MessagesRegistryClient>();
 
-                        if let Some(message_infos) = main_port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
-                        {
-                            let dispatch = registry.dispatch_message;
-                            let connection_id = *connection_id;
+                                    registry
+                                        .1
+                                        .get(&message_infos.message_id)
+                                        .map(|entry| entry.dispatch_message)
+                                };
 
-                            dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, 0);
+                                if let Some(dispatch) = dispatch {
+                                    dispatch(
+                                        world,
+                                        &message_infos.message,
+                                        *connection_id,
+                                        0,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    for (port_id,port) in connection.get_secondary_ports().iter_mut() {
+                        for bytes in port.get_server_messages() {
+                            bytes_queue.push_back(BytesReceivedFromServer{
+                                connection_id: *connection_id,
+                                port_id: *port_id,
+                                bytes_length: bytes.len(),
+                            });
+
+                            port.pong(&bytes, None);
+
+                            if let Some(message_infos) = port.deserialize_message_infos(bytes)
+                            {
+                                let dispatch = {
+                                    let registry =
+                                        world.resource::<MessagesRegistryClient>();
+
+                                    registry
+                                        .1
+                                        .get(&message_infos.message_id)
+                                        .map(|entry| entry.dispatch_message)
+                                };
+
+                                if let Some(dispatch) = dispatch {
+                                    dispatch(
+                                        world,
+                                        &message_infos.message,
+                                        *connection_id,
+                                        *port_id,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
+            });
 
-                for (port_id,port) in connection.get_secondary_ports().iter_mut() {
-                    for bytes in port.get_server_messages() {
-                        bytes_queue.push_back(BytesReceivedFromServer{
-                            connection_id: *connection_id,
-                            port_id: *port_id,
-                            bytes_length: bytes.len(),
-                        });
-
-                        port.pong(&bytes, None);
-
-                        if let Some(message_infos) = port.deserialize_message_infos(bytes) && let Some(registry) = messages_registry_client.1.get(&message_infos.message_id)
-                        {
-                            let dispatch = registry.dispatch_message;
-                            let connection_id = *connection_id;
-                            let port_id = *port_id;
-
-                            dispatch(unsafe_cell.world_mut(), &message_infos.message, connection_id, port_id);
-                        }
-                    }
-                }
-            }
+        while let Some(bytes) = bytes_queue.pop_front() {
+            world.write_message(bytes);
         }
     });
 }
